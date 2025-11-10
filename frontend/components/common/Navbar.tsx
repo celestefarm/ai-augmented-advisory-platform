@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { NAV_LINKS } from "@/constants";
 import { ROUTES } from "@/routes";
 
+import { WAITLIST_URL } from "@/constants";
+
 export function Navbar() {
   const pathname = usePathname();
 
@@ -65,11 +67,11 @@ export function Navbar() {
   };
 
   /**
-   * Renders authentication buttons with responsive layout
+   * Renders beta button with responsive layout
    * @param layout - Layout style: 'horizontal' for desktop, 'vertical' for mobile
    * @param closeMenu - Whether clicking a button should close the mobile menu
    */
-  const renderAuthButtons = (
+  const renderBetaButton = (
     layout: "horizontal" | "vertical",
     closeMenu = false,
   ) => {
@@ -82,21 +84,14 @@ export function Navbar() {
 
     return (
       <div className={layoutClasses}>
-        <Button asChild variant="outline" size="lg" className={buttonClasses}>
-          <Link
-            href={ROUTES.login}
-            onClick={closeMenu ? () => setIsOpen(false) : undefined}
-          >
-            Log In
-          </Link>
-        </Button>
-
         <Button asChild size="lg" className={buttonClasses}>
           <Link
-            href={ROUTES.register}
+            href={WAITLIST_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             onClick={closeMenu ? () => setIsOpen(false) : undefined}
           >
-            Register
+            Join BETA
           </Link>
         </Button>
       </div>
@@ -112,7 +107,7 @@ export function Navbar() {
         {/* Desktop Navigation and Auth */}
         <div className="flex items-center gap-2.5 md:gap-5">
           {renderNavLinks("horizontal")}
-          {renderAuthButtons("horizontal")}
+          {renderBetaButton("horizontal")}
 
           {/* Theme toggle */}
           <ThemeToggle />
@@ -138,7 +133,7 @@ export function Navbar() {
         <div className="absolute top-full right-0 left-0 border-b border-black/10 bg-white/90 shadow-lg backdrop-blur-lg md:hidden dark:border-white/10 dark:bg-black/90">
           <div className="container-width space-y-2.5 p-5">
             {renderNavLinks("vertical", true)}
-            {renderAuthButtons("vertical", true)}
+            {renderBetaButton("vertical", true)}
           </div>
         </div>
       )}
