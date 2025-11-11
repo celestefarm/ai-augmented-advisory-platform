@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 
 import { motion } from "framer-motion";
 import { Mail, Loader2 } from "lucide-react";
@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card";
 
 import { ROUTES } from "@/routes";
 
-export default function CheckEmail() {
+function CheckEmailContent() {
   const searchParams = useSearchParams();
   const email = searchParams.get("email") || "your email";
 
@@ -23,7 +23,7 @@ export default function CheckEmail() {
     setIsResending(true);
 
     try {
-      const response = await fetch("/api/auth/resend-verification/", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/resend-verification/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -42,7 +42,7 @@ export default function CheckEmail() {
           description: data.message || "Please try again later.",
         });
       }
-    } catch (error) {
+    } catch {
       toast.error("Error", {
         description: "Failed to resend verification email.",
       });
@@ -116,5 +116,19 @@ export default function CheckEmail() {
         </div>
       </motion.div>
     </Card>
+  );
+}
+
+export default function CheckEmail() {
+  return (
+    <Suspense fallback={
+      <Card className="mx-auto w-full max-w-md p-8">
+        <div className="flex justify-center">
+          <Loader2 className="h-8 w-8 animate-spin" />
+        </div>
+      </Card>
+    }>
+      <CheckEmailContent />
+    </Suspense>
   );
 }
