@@ -5,6 +5,8 @@ export const PUBLIC_ROUTES = {
   pricing: "/pricing",
   login: "/auth/login",
   register: "/auth/register",
+  verifyEmail: "/auth/verify-email",
+  checkEmail: "/auth/check-email",    
   forgotPassword: "/auth/forgot-password",
   privacyPolicy: "/privacy-policy",
   termsOfService: "/terms-of-service",

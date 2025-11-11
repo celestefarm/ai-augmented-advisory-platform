@@ -15,7 +15,6 @@ const isServer = typeof window === "undefined";
    Register Service
 ----------------------------------------- */
 export interface RegisterRequest {
-  name: string;
   email: string;
   password: string;
   password_confirm: string;
@@ -107,7 +106,21 @@ export const login = async (request: LoginRequest): Promise<LoginResponse> => {
     
     return data;
   } catch (error: unknown) {
-    const axiosError = error as AxiosError<{ message: string }>;
+    const axiosError = error as AxiosError<{ 
+      message: string; 
+      email_verified?: boolean; 
+    }>;
+    
+    // Handle unverified email specifically
+    if (axiosError?.response?.status === 403 && 
+        axiosError?.response?.data?.email_verified === false) {
+      toast.error("Email not verified", {
+        description: "Please check your email and click the verification link.",
+      });
+      throw error;
+    }
+    
+    // Handle other errors
     const errorMessage =
       axiosError?.response?.data?.message ||
       "Login failed. Please try again.";
@@ -116,7 +129,7 @@ export const login = async (request: LoginRequest): Promise<LoginResponse> => {
       description: errorMessage,
     });
     
-    throw error; // Re-throw to handle in component
+    throw error;
   }
 };
 
@@ -142,7 +155,7 @@ export const logout = async (): Promise<LogoutResponse> => {
       localStorage.removeItem('user');
 
       // Clear auth-token cookie
-      // document.cookie = `auth-token=; path=/; max-age=0; SameSite=Strict`;
+      document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     }
     
     return data;
@@ -151,6 +164,8 @@ export const logout = async (): Promise<LogoutResponse> => {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       localStorage.removeItem('user');
+
+      document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     }
     throw error;
   }

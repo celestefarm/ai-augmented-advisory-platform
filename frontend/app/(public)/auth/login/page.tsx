@@ -8,7 +8,9 @@ import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
+import { toast } from "sonner";
 import { z } from "zod";
+import axios, { AxiosError } from "axios";
 
 import { useStore } from "@/store";
 
@@ -43,6 +45,8 @@ export default function Login() {
   const { login } = useStore();
 
   const [showPassword, setShowPassword] = useState(false);
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [resendingEmail, setResendingEmail] = useState(false);
 
   const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -53,6 +57,43 @@ export default function Login() {
     mode: "onChange",
   });
 
+  // Handle resend verification email
+  const handleResendVerification = async () => {
+    const email = form.getValues('email');
+    if (!email) {
+      toast.error('Please enter your email address');
+      return;
+    }
+    
+    setResendingEmail(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/resend-verification/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        toast.success('Email sent!', {
+          description: 'Please check your inbox for the verification link.',
+        });
+        setShowResendVerification(false);
+      } else {
+        toast.error('Failed to send email', {
+          description: data.message || 'Please try again later.',
+        });
+      }
+    } catch (error) {
+      toast.error('Failed to resend email', {
+        description: 'An error occurred. Please try again.',
+      });
+    } finally {
+      setResendingEmail(false);
+    }
+  };
+
   // Handle login submission
   async function handleLogin(values: LoginFormData) {
     try {
@@ -62,13 +103,21 @@ export default function Login() {
       };
       
       const response = await login(loginData);
-      // Response has user, access_token, refresh_token - not success
+      
       if (response.access_token) {
         router.push(ROUTES.dashboard);
       }
-    } catch (error) {
-      // Error already shown by toast in authService
-      console.error('Login failed:', error);
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ 
+        message: string; 
+        email_verified?: boolean; 
+      }>;
+      
+      // Check if it's unverified email error
+      if (axiosError?.response?.status === 403 && 
+          axiosError?.response?.data?.email_verified === false) {
+        setShowResendVerification(true);
+      }
     }
   }
 
@@ -155,6 +204,40 @@ export default function Login() {
                 </FormItem>
               )}
             />
+
+            {/* Resend Verification Notice */}
+            {showResendVerification && (
+              <div className="rounded-md bg-yellow-50 p-4 dark:bg-yellow-900/20">
+                <div className="flex">
+                  <div className="ml-3 flex-1">
+                    <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                      Email not verified
+                    </h3>
+                    <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+                      <p>Please verify your email before logging in.</p>
+                    </div>
+                    <div className="mt-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleResendVerification}
+                        disabled={resendingEmail}
+                      >
+                        {resendingEmail ? (
+                          <>
+                            <Spinner className="mr-2" />
+                            Sending...
+                          </>
+                        ) : (
+                          'Resend Verification Email'
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Submit Button */}
             <Button

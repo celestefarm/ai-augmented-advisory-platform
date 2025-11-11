@@ -34,8 +34,9 @@ import { ROUTES } from "@/routes";
 // Zod schema for register validation
 const registerSchema = z
   .object({
-    name: z.string().trim().min(1, "Name is required"),
-    email: z.email("Invalid email address"),
+    firstName: z.string().trim().min(1, "First name is required"),
+    lastName: z.string().trim().min(1, "Last name is required"),
+    email: z.string().email("Invalid email address"),
     password: z
       .string()
       .min(8, "Password must be at least 8 characters long")
@@ -55,7 +56,7 @@ const registerSchema = z
   })
   .refine(data => data.password === data.confirmPassword, {
     message: "Passwords don't match",
-    path: ["confirmPassword"], // This sets which field the error appears on
+    path: ["confirmPassword"],
   });
 
 type RegisterFormData = z.infer<typeof registerSchema>;
@@ -71,7 +72,8 @@ export default function Register() {
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
     defaultValues: {
-      name: "",
+      firstName: "",
+      lastName: "",
       email: "",
       password: "",
       confirmPassword: "",
@@ -82,15 +84,24 @@ export default function Register() {
 
   // Handle register submission
   async function handleRegister(values: RegisterFormData) {
-    // Extract only the fields needed for the backend (excluding confirmPassword and acceptTerms)
-    const registerData: RegisterRequest = {
-      name: values.name,
-      email: values.email,
-      password: values.password,
-    };
-    const response = await register(registerData);
-    if (response.success) {
-      router.push(ROUTES.dashboard); // Auto-login after successful registration
+    try {
+      const registerData: RegisterRequest = {
+        email: values.email,
+        password: values.password,
+        password_confirm: values.confirmPassword,
+        first_name: values.firstName,
+        last_name: values.lastName,
+      };
+      
+      const response = await register(registerData);
+      
+      // Response has { message, email }
+      if (response.email) {
+        // Don't auto-login - redirect to verify email page
+         router.push(`${ROUTES.checkEmail}?email=${encodeURIComponent(response.email)}`);
+        }
+    } catch (error) {
+      console.error('Registration failed:', error);
     }
   }
 
@@ -116,19 +127,42 @@ export default function Register() {
             onSubmit={form.handleSubmit(handleRegister)}
             className="space-y-5"
           >
-            {/* Name Field */}
+            {/* First Name Field */}
             <FormField
               control={form.control}
-              name="name"
+              name="firstName"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Full Name</FormLabel>
+                  <FormLabel>First Name</FormLabel>
                   <div className="relative">
                     <User className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <FormControl>
                       <Input
                         type="text"
-                        placeholder="Enter your full name"
+                        placeholder="Enter your first name"
+                        className="pl-9"
+                        {...field}
+                      />
+                    </FormControl>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Last Name Field */}
+            <FormField
+              control={form.control}
+              name="lastName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Last Name</FormLabel>
+                  <div className="relative">
+                    <User className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <FormControl>
+                      <Input
+                        type="text"
+                        placeholder="Enter your last name"
                         className="pl-9"
                         {...field}
                       />
@@ -179,7 +213,6 @@ export default function Register() {
                         {...field}
                         onChange={e => {
                           field.onChange(e);
-                          // Revalidate confirmPassword when password changes
                           form.trigger("confirmPassword");
                         }}
                       />
