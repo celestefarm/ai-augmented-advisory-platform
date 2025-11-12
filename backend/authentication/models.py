@@ -21,7 +21,7 @@ class UserManager(BaseUserManager):
         
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
-        user.set_password(password)  # This uses bcrypt via Django's password hashers
+        user.set_password(password)
         user.save(using=self._db)
         return user
 
@@ -29,7 +29,7 @@ class UserManager(BaseUserManager):
         """Create regular user"""
         extra_fields.setdefault('is_staff', False)
         extra_fields.setdefault('is_superuser', False)
-        extra_fields.setdefault('is_active', True)  # Auto-activate for MVP to be changed later
+        extra_fields.setdefault('is_active', True)
         return self._create_user(email, password, **extra_fields)
 
     def create_superuser(self, email, password, **extra_fields):
@@ -56,6 +56,58 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('free', _('Free Trial')),
         ('pro', _('Professional')),
         ('enterprise', _('Enterprise')),
+    ]
+
+    INDUSTRIES = [
+        ('technology', _('Technology')),
+        ('finance', _('Finance & Banking')),
+        ('healthcare', _('Healthcare & Pharmaceuticals')),
+        ('manufacturing', _('Manufacturing')),
+        ('retail', _('Retail & E-commerce')),
+        ('energy', _('Energy & Utilities')),
+        ('telecommunications', _('Telecommunications')),
+        ('real_estate', _('Real Estate')),
+        ('education', _('Education')),
+        ('hospitality', _('Hospitality & Tourism')),
+        ('transportation', _('Transportation & Logistics')),
+        ('media', _('Media & Entertainment')),
+        ('agriculture', _('Agriculture')),
+        ('construction', _('Construction')),
+        ('consulting', _('Consulting & Professional Services')),
+        ('government', _('Government & Public Sector')),
+        ('nonprofit', _('Non-Profit')),
+        ('other', _('Other')),
+    ]
+
+    REGIONS = [
+        # Africa
+        ('africa_north', _('North Africa')),
+        ('africa_west', _('West Africa')),
+        ('africa_east', _('East Africa')),
+        ('africa_central', _('Central Africa')),
+        ('africa_southern', _('Southern Africa')),
+        
+        # Asia
+        ('asia_east', _('East Asia')),
+        ('asia_southeast', _('Southeast Asia')),
+        ('asia_south', _('South Asia')),
+        ('asia_central', _('Central Asia')),
+        ('asia_west', _('West Asia/Middle East')),
+        
+        # Europe
+        ('europe_west', _('Western Europe')),
+        ('europe_east', _('Eastern Europe')),
+        ('europe_north', _('Northern Europe')),
+        ('europe_south', _('Southern Europe')),
+        
+        # Americas
+        ('americas_north', _('North America')),
+        ('americas_central', _('Central America')),
+        ('americas_caribbean', _('Caribbean')),
+        ('americas_south', _('South America')),
+        
+        # Oceania
+        ('oceania', _('Oceania')),
     ]
 
     # Core Identity
@@ -88,7 +140,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_('Authentication provider used')
     )
     
-    # Professional Profile (Optional for MVP, required for personalization)
+    # Professional Profile
     first_name = models.CharField(
         _('first name'),
         max_length=150,
@@ -99,11 +151,19 @@ class User(AbstractBaseUser, PermissionsMixin):
         max_length=150,
         blank=True
     )
-    company = models.CharField(
-        _('company name'),
-        max_length=255,
+    industry = models.CharField(
+        _('industry'),
+        max_length=100,
         blank=True,
-        help_text=_('User\'s organization')
+        choices=INDUSTRIES,
+        help_text=_('User\'s industry sector')
+    )
+    region = models.CharField(
+        _('region'),
+        max_length=50,
+        blank=True,
+        choices=REGIONS,
+        help_text=_('User\'s geographical region')
     )
     role = models.CharField(
         _('role/title'),
@@ -124,7 +184,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Account Status
     is_active = models.BooleanField(
         _('active'),
-        default=True,  # Auto-activate for Week 1 MVP
+        default=True,
         help_text=_('Designates whether this user account is active')
     )
     is_staff = models.BooleanField(
@@ -146,7 +206,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     updated_at = models.DateTimeField(auto_now=True)
     
-    # Firebase Integration (for Firestore sync)
+    # Firebase Integration
     firebase_uid = models.CharField(
         max_length=128,
         blank=True,
@@ -155,12 +215,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_('Firebase user ID for Firestore sync')
     )
 
-    # Manager
     objects = UserManager()
 
-    # Authentication
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = []  # Email is already required by USERNAME_FIELD
+    REQUIRED_FIELDS = []
 
     class Meta:
         verbose_name = _('user')
@@ -178,21 +236,17 @@ class User(AbstractBaseUser, PermissionsMixin):
         from django.core.mail import send_mail
         from django.template.loader import render_to_string
         from django.utils.html import strip_tags
-        from django.urls import reverse
         from rest_framework_simplejwt.tokens import RefreshToken
         
-        # Generate token for email verification
         token = RefreshToken.for_user(self)
         verification_url = f"{settings.FRONTEND_URL}/auth/verify-email?token={str(token.access_token)}"
         
-        # Render email template
         html_message = render_to_string('emails/verify_email.html', {
             'user': self,
             'verification_url': verification_url,
         })
         plain_message = strip_tags(html_message)
         
-        # Send email
         send_mail(
             subject='Verify your AI-Augmented account',
             message=plain_message,
@@ -230,16 +284,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         return limits.get(self.subscription_tier, 3)
 
     def to_firestore_dict(self):
-        """
-        Convert user data to Firestore-compatible dictionary
-        Used for syncing with Firebase
-        """
+        """Convert user data to Firestore-compatible dictionary"""
         return {
             'user_id': str(self.id),
             'email': self.email,
             'first_name': self.first_name,
             'last_name': self.last_name,
-            'company': self.company,
+            'industry': self.industry,
+            'region': self.region,
             'role': self.role,
             'subscription_tier': self.subscription_tier,
             'is_active': self.is_active,

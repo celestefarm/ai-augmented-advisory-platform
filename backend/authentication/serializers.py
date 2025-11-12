@@ -4,7 +4,6 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import EmailValidator
-import re
 
 User = get_user_model()
 
@@ -34,13 +33,15 @@ class RegisterSerializer(serializers.ModelSerializer):
             'password_confirm',
             'first_name',
             'last_name',
-            'company',
+            'industry',
+            'region',
             'role',
         )
         extra_kwargs = {
             'first_name': {'required': False},
             'last_name': {'required': False},
-            'company': {'required': False},
+            'industry': {'required': False},
+            'region': {'required': False},
             'role': {'required': False},
         }
 
@@ -107,12 +108,34 @@ class UserSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.CharField(source='get_full_name', read_only=True)
     short_name = serializers.CharField(source='get_short_name', read_only=True)
+    industry_display = serializers.CharField(source='get_industry_display', read_only=True)
+    region_display = serializers.CharField(source='get_region_display', read_only=True)
     
     class Meta:
         model = User
-        fields = ( 'id', 'email', 'first_name', 'last_name', 'full_name', 'short_name', 'company', 'role', 'subscription_tier', 'is_active', 'email_verified', 'auth_provider', 'workspace_limit', 'created_at', 'last_login',)
+        fields = (
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            'full_name',
+            'short_name',
+            'industry',
+            'industry_display',
+            'region',
+            'region_display',
+            'role',
+            'subscription_tier',
+            'is_active',
+            'email_verified',
+            'auth_provider',
+            'workspace_limit',
+            'created_at',
+            'last_login',
+        )
         read_only_fields = (
             'id',
+            'email',
             'subscription_tier',
             'is_active',
             'email_verified',
@@ -126,15 +149,24 @@ class UserSerializer(serializers.ModelSerializer):
 class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating user profile
+    Allows updating: first_name, last_name, industry, region, role
     """
     class Meta:
         model = User
         fields = (
             'first_name',
             'last_name',
-            'company',
+            'industry',
+            'region',
             'role',
         )
+        extra_kwargs = {
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'industry': {'required': False},
+            'region': {'required': False},
+            'role': {'required': False},
+        }
 
     def validate_first_name(self, value):
         """Remove extra whitespace"""
@@ -143,3 +175,19 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     def validate_last_name(self, value):
         """Remove extra whitespace"""
         return value.strip() if value else value
+    
+    def validate_role(self, value):
+        """Remove extra whitespace"""
+        return value.strip() if value else value
+    
+    def validate_industry(self, value):
+        """Validate industry choice"""
+        if value and value not in dict(User.INDUSTRIES):
+            raise serializers.ValidationError("Invalid industry selection")
+        return value
+    
+    def validate_region(self, value):
+        """Validate region choice"""
+        if value and value not in dict(User.REGIONS):
+            raise serializers.ValidationError("Invalid region selection")
+        return value

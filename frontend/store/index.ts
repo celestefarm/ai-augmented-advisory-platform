@@ -6,10 +6,12 @@ import {
   login as authServiceLogin,
   logout as authServiceLogout,
   register as authServiceRegister,
+  updateProfile as updateProfileService,
   LoginRequest,
   LoginResponse,
   RegisterRequest,
   RegisterResponse,
+  UpdateProfileRequest,
   User,
 } from "@/services/authService";
 import { sendMessage } from "@/services/chatService";
@@ -28,6 +30,7 @@ export interface AuthState {
   register: (userData: RegisterRequest) => Promise<RegisterResponse>;
   login: (credentials: LoginRequest) => Promise<LoginResponse>;
   logout: () => Promise<void>;
+  updateProfile: (data: UpdateProfileRequest) => Promise<LoginResponse>;
 }
 
 interface UIState {
@@ -108,6 +111,19 @@ export const useStore = create(
           
           useStore.persist.clearStorage();
           window.location.reload();
+        }
+      },
+
+      updateProfile: async (data: UpdateProfileRequest) => {
+        try {
+          const response = await updateProfileService(data);
+          
+          // Update user in store
+          set({ user: response.user });
+          
+          return response;
+        } catch (error) {
+          throw error;
         }
       },
 

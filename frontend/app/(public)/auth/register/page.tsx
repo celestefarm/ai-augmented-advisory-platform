@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, User, Building, MapPin } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -24,6 +24,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PasswordStrength } from "@/components/ui/password-strength";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -37,6 +44,8 @@ const registerSchema = z
     firstName: z.string().trim().min(1, "First name is required"),
     lastName: z.string().trim().min(1, "Last name is required"),
     email: z.string().email("Invalid email address"),
+    industry: z.string().min(1, "Please select your industry"),
+    region: z.string().min(1, "Please select your region"),
     password: z
       .string()
       .min(8, "Password must be at least 8 characters long")
@@ -61,13 +70,27 @@ const registerSchema = z
 
 type RegisterFormData = z.infer<typeof registerSchema>;
 
+interface FormChoice {
+  value: string;
+  label: string;
+}
+
+interface FormChoices {
+  industries: FormChoice[];
+  regions: FormChoice[];
+}
+
 export default function Register() {
   const router = useRouter();
-
   const { register } = useStore();
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [formChoices, setFormChoices] = useState<FormChoices>({
+    industries: [],
+    regions: [],
+  });
+  const [isLoadingChoices, setIsLoadingChoices] = useState(true);
 
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
@@ -75,12 +98,36 @@ export default function Register() {
       firstName: "",
       lastName: "",
       email: "",
+      industry: "",
+      region: "",
       password: "",
       confirmPassword: "",
       acceptTerms: false,
     },
     mode: "onChange",
   });
+
+  // Fetch form choices on mount
+  useEffect(() => {
+    const fetchFormChoices = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/form-choices/`
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          setFormChoices(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch form choices:', error);
+      } finally {
+        setIsLoadingChoices(false);
+      }
+    };
+
+    fetchFormChoices();
+  }, []);
 
   // Handle register submission
   async function handleRegister(values: RegisterFormData) {
@@ -91,15 +138,15 @@ export default function Register() {
         password_confirm: values.confirmPassword,
         first_name: values.firstName,
         last_name: values.lastName,
+        industry: values.industry,
+        region: values.region,
       };
       
       const response = await register(registerData);
       
-      // Response has { message, email }
       if (response.email) {
-        // Don't auto-login - redirect to verify email page
-         router.push(`${ROUTES.checkEmail}?email=${encodeURIComponent(response.email)}`);
-        }
+        router.push(`${ROUTES.checkEmail}?email=${encodeURIComponent(response.email)}`);
+      }
     } catch (error) {
       console.error('Registration failed:', error);
     }
@@ -190,6 +237,72 @@ export default function Register() {
                         {...field}
                       />
                     </FormControl>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Industry Field */}
+            <FormField
+              control={form.control}
+              name="industry"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Industry</FormLabel>
+                  <div className="relative">
+                    <Building className="absolute top-1/2 left-3 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                      disabled={isLoadingChoices}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="pl-9">
+                          <SelectValue placeholder="Select your industry" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {formChoices.industries.map((industry) => (
+                          <SelectItem key={industry.value} value={industry.value}>
+                            {industry.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Region Field */}
+            <FormField
+              control={form.control}
+              name="region"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Region</FormLabel>
+                  <div className="relative">
+                    <MapPin className="absolute top-1/2 left-3 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                      disabled={isLoadingChoices}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="pl-9">
+                          <SelectValue placeholder="Select your region" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {formChoices.regions.map((region) => (
+                          <SelectItem key={region.value} value={region.value}>
+                            {region.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <FormMessage />
                 </FormItem>

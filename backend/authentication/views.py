@@ -17,7 +17,8 @@ from .serializers import (
     LoginSerializer, 
     UserSerializer,
     GoogleAuthSerializer,
-    VerifyEmailSerializer
+    VerifyEmailSerializer,
+    UserUpdateSerializer
 )
 from .models import User
 
@@ -656,3 +657,89 @@ class HealthCheckAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+    
+class UpdateProfileAPIView(APIView):
+    """
+    Update User Profile Endpoint
+    PUT /api/auth/profile
+    PATCH /api/auth/profile
+    
+    Updates user profile information
+    """
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, *args, **kwargs):
+        return self._update_profile(request, partial=False)
+
+    def patch(self, request, *args, **kwargs):
+        return self._update_profile(request, partial=True)
+
+    def _update_profile(self, request, partial=False):
+        try:
+            user = request.user
+            serializer = UserUpdateSerializer(
+                user,
+                data=request.data,
+                partial=partial
+            )
+
+            if not serializer.is_valid():
+                return Response(
+                    {
+                        'message': 'Validation failed',
+                        'errors': serializer.errors
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            serializer.save()
+            logger.info(f"Profile updated for user: {user.email}")
+
+            return Response(
+                {
+                    'message': 'Profile updated successfully',
+                    'user': UserSerializer(user).data
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Profile update error: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'message': 'Profile update failed',
+                    'error': 'An unexpected error occurred'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+class GetFormChoicesAPIView(APIView):
+    """
+    Get Form Choices Endpoint
+    GET /api/auth/form-choices
+    
+    Returns available choices for industries and regions
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            return Response(
+                {
+                    'industries': [
+                        {'value': choice[0], 'label': choice[1]}
+                        for choice in User.INDUSTRIES
+                    ],
+                    'regions': [
+                        {'value': choice[0], 'label': choice[1]}
+                        for choice in User.REGIONS
+                    ]
+                },
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error fetching form choices: {str(e)}", exc_info=True)
+            return Response(
+                {'message': 'Failed to fetch form choices'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

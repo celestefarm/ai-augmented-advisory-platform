@@ -2,7 +2,6 @@
 
 import { useStore } from "@/store";
 
-import Header from "@/components/common/Header";
 import Loader from "@/components/common/Loader";
 
 export default function ProtectedLayout({
@@ -16,10 +15,6 @@ export default function ProtectedLayout({
     return <Loader />;
   }
 
-  return (
-    <div className="flex h-screen flex-col">
-      <Header />
-      <main className="flex-1 overflow-y-auto">{children}</main>
-    </div>
-  );
+  // Remove Header and overflow - let dashboard handle its own layout
+  return <>{children}</>;
 }

@@ -1,7 +1,7 @@
 import { AxiosError } from "axios";
 import { toast } from "sonner";
 
-import { endpoints, POST } from "./apiService";
+import { endpoints, POST, PATCH } from "./apiService";
 
 // Detect if we’re on the server or client
 const isServer = typeof window === "undefined";
@@ -20,6 +20,8 @@ export interface RegisterRequest {
   password_confirm: string;
   first_name?: string;
   last_name?: string;
+  industry?: string;
+  region?: string;
   company?: string;
   role?: string;
 }
@@ -144,29 +146,102 @@ export const logout = async (): Promise<LogoutResponse> => {
   const refreshToken = !isServer ? localStorage.getItem('refresh_token') : null;
   
   try {
+    // If no refresh token, just clear local storage
+    if (!refreshToken) {
+      if (!isServer) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user');
+        document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      }
+      return { message: 'Logged out successfully' };
+    }
+
     const { data } = await POST<LogoutResponse, { refresh_token: string }>(
       endpoints.auth.logout,
-      { refresh_token: refreshToken! },  // Backend expects this
+      { refresh_token: refreshToken },
     );
     
     if (!isServer) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       localStorage.removeItem('user');
-
-      // Clear auth-token cookie
       document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     }
     
     return data;
-  } catch (error) {
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError<{ message: string }>;
+    
+    // If 401, token is already invalid - just clear local storage
+    if (axiosError?.response?.status === 401) {
+      if (!isServer) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user');
+        document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      }
+      return { message: 'Logged out successfully' };
+    }
+    
+    // For any other error, still clear storage
     if (!isServer) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       localStorage.removeItem('user');
-
       document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     }
+    
+    throw error;
+  }
+};
+
+
+/* ----------------------------------------
+   Update profile Service
+----------------------------------------- */
+export interface UpdateProfileRequest {
+  first_name?: string;
+  last_name?: string;
+  industry?: string;
+  region?: string;
+  role?: string;
+}
+
+export const updateProfile = async (
+  request: UpdateProfileRequest
+): Promise<LoginResponse> => {
+  try {
+    const { data } = await PATCH<LoginResponse, UpdateProfileRequest>(
+      endpoints.auth.profile, // Make sure this endpoint exists
+      request
+    );
+
+    // Update user in localStorage
+    if (!isServer) {
+      const storedUser = localStorage.getItem("user");
+      if (storedUser) {
+        const user = JSON.parse(storedUser);
+        const updatedUser = { ...user, ...data.user };
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+      }
+    }
+
+    toast.success("Profile updated", {
+      description: "Your profile has been updated successfully.",
+    });
+
+    return data;
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError<{ message: string; errors?: unknown }>;
+    const errorMessage =
+      axiosError?.response?.data?.message ||
+      "Failed to update profile. Please try again.";
+
+    toast.error("Update failed", {
+      description: errorMessage,
+    });
+
     throw error;
   }
 };

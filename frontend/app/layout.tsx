@@ -11,7 +11,7 @@ import "./globals.css";
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
-  display: "swap", // Prevent font loading from blocking render
+  display: "swap",
   preload: true,
 });
 
@@ -26,13 +26,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning={true}>
+    <html lang="en" suppressHydrationWarning={true} className="h-full">
       <head>
         <ThemeScript />
       </head>
       <body
-        className={`${inter.variable} antialiased`}
-        // Suppress hydration warnings for browser extension attributes
+        className={`${inter.variable} h-full overflow-hidden antialiased`}
         suppressHydrationWarning={true}
       >
         <ThemeProvider>

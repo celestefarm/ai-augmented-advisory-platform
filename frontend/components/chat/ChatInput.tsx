@@ -27,9 +27,8 @@ export const ChatInput = () => {
       handleSendMessage(inputValue.trim());
       setInputValue("");
       if (textareaRef.current) {
-        textareaRef.current.style.height = "128px"; // Reset height
+        textareaRef.current.style.height = "auto";
       }
-      // Keep focus on textarea after sending - use setTimeout to ensure it happens after React updates
       setTimeout(() => {
         if (textareaRef.current) {
           textareaRef.current.focus();
@@ -41,35 +40,49 @@ export const ChatInput = () => {
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
     if (textareaRef.current) {
-      textareaRef.current.style.height = "128px"; // Reset first
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`; // Auto-grow
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault(); // Prevent new line
-      handleSubmit(); // Send message
+      e.preventDefault();
+      handleSubmit();
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="px-5 py-2.5">
-      <div className="flex items-end gap-2.5 rounded-xl border border-border bg-card p-2.5 shadow-sm">
-        <Textarea
-          ref={textareaRef}
-          value={inputValue}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder="Type your message..."
-          className="max-h-60 min-h-32 flex-1 resize-none overflow-y-auto rounded-none border-none !bg-transparent px-0 text-sm leading-snug shadow-none dark:!bg-transparent"
-          disabled={isProcessing}
-          rows={4}
-        />
-        <Button type="submit" disabled={!inputValue.trim() || isProcessing}>
-          <ArrowUp />
-        </Button>
+    <div className=" border-border bg-background">
+      <div className="mx-auto max-w-3xl px-4 py-4 sm:py-6">
+        <form onSubmit={handleSubmit} className="relative">
+          <div className="group relative flex items-end gap-2 rounded-2xl border border-border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:border-primary focus-within:shadow-md">
+            <Textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder="How can I Help you today..."
+              className="max-h-100 min-h-[52px] flex-1 resize-none border-none bg-transparent px-4 py-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 sm:py-3.5"
+              disabled={isProcessing}
+              rows={1}
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!inputValue.trim() || isProcessing}
+              className="mb-2 mr-2 h-8 w-8 shrink-0 rounded-lg sm:h-9 sm:w-9"
+            >
+              <ArrowUp className="h-4 w-4" />
+            </Button>
+          </div>
+          
+          {/* Character hint */}
+          <p className="mt-2 px-1 text-center text-xs text-muted-foreground sm:text-left">
+            Press <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Enter</kbd> to send, <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Shift + Enter</kbd> for new line
+          </p>
+        </form>
       </div>
-    </form>
+    </div>
   );
 };

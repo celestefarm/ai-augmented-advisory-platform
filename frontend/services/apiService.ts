@@ -1,14 +1,12 @@
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 
-import { ROUTES } from "@/routes";
-
-// Detect if we’re on the server or client
+// Detect if we're on the server or client
 const isServer = typeof window === "undefined";
 
 // API base URL
 const baseURL = isServer
   ? process.env.API_URL || "http://localhost:8000" // server → Django directly
-  : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/"; // client → Next.js proxy
+  : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"; // client → Next.js proxy (removed trailing slash)
 
 // Global API timeout (2 mins)
 const timeout = 1000 * 60 * 2;
@@ -22,6 +20,7 @@ export const endpoints = {
     verifyEmail: "/api/auth/verify-email/",
     resendVerification: "/api/auth/resend-verification/",
     refresh: "/api/auth/token/refresh/",
+    profile: "/api/auth/profile/",
   },
   assistant: {
     chat: "/assistant/chat",
@@ -37,7 +36,7 @@ export function getApiUrl(endpoint: string) {
 export const apiService = axios.create({
   baseURL,
   timeout,
-  withCredentials: true, // Ensures cookies are sent with requests
+  withCredentials: true,
 });
 
 // Import logout function - will be set by store
@@ -65,15 +64,17 @@ apiService.interceptors.request.use(
 
 // Token refresh logic
 let isRefreshing = false;
-let failedQueue: any[] = [];
-
+let failedQueue: Array<{
+  resolve: (token: string) => void;
+  reject: (error: any) => void;
+}> = [];
 
 const processQueue = (error: any, token: string | null = null) => {
   failedQueue.forEach(prom => {
     if (error) {
       prom.reject(error);
     } else {
-      prom.resolve(token);
+      prom.resolve(token!);
     }
   });
   
@@ -109,9 +110,9 @@ apiService.interceptors.response.use(
       }
 
       try {
-        // Call Django refresh endpoint (you need to add this)
+        // Call Django refresh endpoint with trailing slash
         const { data } = await axios.post(
-          `${baseURL}/api/auth/token/refresh`,
+          `${baseURL}/api/auth/token/refresh/`,
           { refresh: refreshToken }
         );
         

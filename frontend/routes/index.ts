@@ -14,6 +14,7 @@ export const PUBLIC_ROUTES = {
 
 export const PROTECTED_ROUTES = {
   dashboard: "/dashboard",
+  settings: "/settings",
 } as const;
 
 export const ROUTES = {
