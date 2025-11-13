@@ -14,6 +14,13 @@ import {
   UpdateProfileRequest,
   User,
 } from "@/services/authService";
+import {
+  getWorkspaces,
+  createWorkspace as createWorkspaceService,
+  deleteWorkspace as deleteWorkspaceService,
+  CreateWorkspaceRequest,
+  Workspace,
+} from "@/services/workspaceService";
 import { sendMessage } from "@/services/chatService";
 
 import { Message, Theme } from "@/types";
@@ -45,7 +52,15 @@ interface MessageState {
   clearChat: () => void;
 }
 
-interface StoreState extends ThemeState, AuthState, UIState, MessageState {}
+interface WorkspaceState {
+  workspaces: Workspace[];
+  isLoadingWorkspaces: boolean;
+  fetchWorkspaces: () => Promise<void>;
+  createWorkspace: (data: CreateWorkspaceRequest) => Promise<Workspace>;
+  deleteWorkspace: (id: string) => Promise<void>;
+}
+
+interface StoreState extends ThemeState, AuthState, UIState, MessageState, WorkspaceState {}
 
 export const useStore = create(
   persist<StoreState, [], [], Partial<StoreState>>(
@@ -122,6 +137,46 @@ export const useStore = create(
           set({ user: response.user });
           
           return response;
+        } catch (error) {
+          throw error;
+        }
+      },
+      /* ---------------- WORKSPACE STATE ---------------- */
+      workspaces: [], // Already correct
+      isLoadingWorkspaces: false,
+
+      fetchWorkspaces: async () => {
+        set({ isLoadingWorkspaces: true });
+        try {
+          const workspaces = await getWorkspaces();
+          // Ensure it's always an array
+          set({ workspaces: Array.isArray(workspaces) ? workspaces : [] });
+        } catch (error) {
+          console.error('Failed to fetch workspaces:', error);
+          set({ workspaces: [] }); // Set empty array on error
+        } finally {
+          set({ isLoadingWorkspaces: false });
+        }
+      },
+
+      createWorkspace: async (data: CreateWorkspaceRequest) => {
+        try {
+          const workspace = await createWorkspaceService(data);
+          set(state => ({ 
+            workspaces: [...(state.workspaces || []), workspace] 
+          }));
+          return workspace;
+        } catch (error) {
+          throw error;
+        }
+      },
+
+      deleteWorkspace: async (id: string) => {
+        try {
+          await deleteWorkspaceService(id);
+          set(state => ({ 
+            workspaces: (state.workspaces || []).filter(w => w.id !== id) 
+          }));
         } catch (error) {
           throw error;
         }
@@ -219,6 +274,7 @@ export const useStore = create(
         user: state.user,
         isProcessing: state.isProcessing,
         messages: state.messages,
+        workspaces: state.workspaces,
       }),
     },
   ),

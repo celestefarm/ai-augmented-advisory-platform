@@ -22,6 +22,11 @@ export const endpoints = {
     refresh: "/api/auth/token/refresh/",
     profile: "/api/auth/profile/",
   },
+  workspaces: {
+    list: "/api/workspaces/",
+    detail: (id: string) => `/api/workspaces/${id}/`,
+    pin: (id: string) => `/api/workspaces/${id}/pin/`,
+  },
   assistant: {
     chat: "/assistant/chat",
   },

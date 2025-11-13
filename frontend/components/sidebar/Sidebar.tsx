@@ -1,7 +1,8 @@
+// components/Sidebar.tsx - Add workspace management
+
 "use client";
 
-import { useState } from "react";
-
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   MessageSquare,
@@ -12,6 +13,14 @@ import {
   LogOut,
   Menu,
   X,
+  Folder,
+  ChevronDown,
+  ChevronUp,
+  Home,
+  Zap,
+  MoreVertical,
+  Trash2,
+  Edit,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -25,14 +34,43 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { CreateWorkspaceDialog } from "@/components/dialogs/CreateWorkspaceDialog";
+import { DeleteWorkspaceDialog } from "@/components/dialogs/DeleteWorkspaceDialog";
 
 import { ROUTES } from "@/routes";
 
 export function Sidebar() {
   const router = useRouter();
-  const { clearChat, user, logout } = useStore();
+  const { 
+    clearChat, 
+    user, 
+    logout,
+    workspaces,
+    fetchWorkspaces,
+    createWorkspace,
+    deleteWorkspace,
+    isLoadingWorkspaces,
+  } = useStore();
+  
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<string[]>([]);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [deleteWorkspaceId, setDeleteWorkspaceId] = useState<string | null>(null);
+
+  // Fetch workspaces on mount
+  useEffect(() => {
+    if (user) {
+      fetchWorkspaces();
+    }
+  }, [user]);
+
+  useEffect(() => {
+      console.log('Workspaces:', workspaces);
+      console.log('Type:', typeof workspaces);
+      console.log('Is Array:', Array.isArray(workspaces));
+    }, [workspaces]);
 
   const handleLogout = async () => {
     await logout();
@@ -43,6 +81,31 @@ export function Sidebar() {
     clearChat();
     setIsMobileOpen(false);
   };
+
+  const toggleWorkspace = (workspaceId: string) => {
+    setExpandedWorkspaces(prev =>
+      prev.includes(workspaceId)
+        ? prev.filter(id => id !== workspaceId)
+        : [...prev, workspaceId]
+    );
+  };
+
+  const handleCreateWorkspace = async (data: {
+    name: string;
+    description: string;
+    icon: string;
+  }) => {
+    await createWorkspace(data);
+  };
+
+  const handleDeleteWorkspace = async () => {
+    if (deleteWorkspaceId) {
+      await deleteWorkspace(deleteWorkspaceId);
+      setDeleteWorkspaceId(null);
+    }
+  };
+
+  const workspaceToDelete = workspaces?.find(w => w.id === deleteWorkspaceId);
 
   return (
     <>
@@ -101,55 +164,176 @@ export function Sidebar() {
           </Button>
         </div>
 
-        {/* New Chat Button */}
-        <div className="shrink-0 p-3">
+        {/* Action Buttons */}
+        <div className="shrink-0 space-y-2 p-3">
+          <Button
+            onClick={() => setIsCreateDialogOpen(true)}
+            className={`w-full gap-2 ${isSidebarCollapsed ? "justify-center px-0" : "justify-start"}`}
+            variant="default"
+            title={isSidebarCollapsed ? "New workspace" : undefined}
+            disabled={!user || (workspaces?.length || 0) >= (user?.workspace_limit || 3)}
+          >
+            <Folder className="h-4 w-4 shrink-0" />
+            {!isSidebarCollapsed && <span>New Workspace</span>}
+          </Button>
+          
           <Button
             onClick={handleNewChat}
             className={`w-full gap-2 ${isSidebarCollapsed ? "justify-center px-0" : "justify-start"}`}
-            variant="default"
+            variant="outline"
             title={isSidebarCollapsed ? "New chat" : undefined}
           >
             <Plus className="h-4 w-4 shrink-0" />
-            {!isSidebarCollapsed && <span>New chat</span>}
+            {!isSidebarCollapsed && <span>New Chat</span>}
           </Button>
         </div>
 
         {/* Navigation */}
         <div className="flex-1 overflow-y-auto px-3">
-          <div className="space-y-1 py-2">
-            <Button
-              variant="ghost"
-              className={`w-full gap-3 ${isSidebarCollapsed ? "justify-center px-0" : "justify-start"}`}
-              onClick={() => setIsMobileOpen(false)}
-              title={isSidebarCollapsed ? "Chats" : undefined}
-            >
-              <MessageSquare className="h-4 w-4 shrink-0" />
-              {!isSidebarCollapsed && <span>Chats</span>}
-            </Button>
-          </div>
-
-          {/* Recent Chats */}
-          {!isSidebarCollapsed && (
-            <div className="mt-6 pb-4">
-              <h3 className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Recent
-              </h3>
-              <div className="space-y-1">
+          {!isSidebarCollapsed ? (
+            <>
+              {/* Home */}
+              <div className="space-y-1 py-2">
                 <Button
                   variant="ghost"
-                  className="h-auto w-full justify-start py-2 text-left text-sm"
+                  className="w-full justify-start gap-3"
                   onClick={() => setIsMobileOpen(false)}
                 >
-                  <span className="truncate">Sample conversation 1</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-auto w-full justify-start py-2 text-left text-sm"
-                  onClick={() => setIsMobileOpen(false)}
-                >
-                  <span className="truncate">Sample conversation 2</span>
+                  <Home className="h-4 w-4 shrink-0" />
+                  <span>Home</span>
                 </Button>
               </div>
+
+              {/* Workspaces Section */}
+              <div className="mt-4 pb-4">
+                <div className="mb-2 flex items-center justify-between px-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Workspaces
+                  </h3>
+                  <Badge variant="secondary" className="text-xs">
+                    {workspaces.length}/{user?.workspace_limit || 3}
+                  </Badge>
+                </div>
+                
+                {isLoadingWorkspaces ? (
+                  <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                    Loading workspaces...
+                  </div>
+                ) : workspaces.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                    No workspaces yet
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {workspaces?.map((workspace) => (
+                      <div key={workspace.id}>
+                        {/* Workspace Item */}
+                        <div className="group relative">
+                          <Button
+                            variant="ghost"
+                            className="h-auto w-full justify-between py-2 pr-8 text-left"
+                            onClick={() => toggleWorkspace(workspace.id)}
+                          >
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <span className="shrink-0 text-base">{workspace.icon}</span>
+                              <span className="truncate text-sm font-medium">
+                                {workspace.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Badge variant="outline" className="text-xs h-5 px-1.5">
+                                {workspace.conversation_count}
+                              </Badge>
+                              {expandedWorkspaces.includes(workspace.id) ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )}
+                            </div>
+                          </Button>
+
+                          {/* Workspace Actions */}
+                          <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MoreVertical className="h-3 w-3" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem>
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  <span>Rename</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => setDeleteWorkspaceId(workspace.id)}
+                                  className="text-destructive"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  <span>Delete</span>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </div>
+
+                        {/* Conversations in Workspace */}
+                        {expandedWorkspaces.includes(workspace.id) && (
+                          <div className="ml-6 space-y-1 border-l border-border pl-2 mt-1">
+                            {/* TODO: Add real conversations */}
+                            <div className="px-3 py-2 text-xs text-muted-foreground">
+                              No conversations yet
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Quick Chats Section */}
+              <div className="mt-4 pb-4">
+                <h3 className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Quick Chats
+                </h3>
+                <div className="space-y-1">
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    No quick chats yet
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            // Collapsed sidebar - show icons only
+            <div className="space-y-2 py-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="mx-auto"
+                title="Home"
+                onClick={() => setIsMobileOpen(false)}
+              >
+                <Home className="h-4 w-4" />
+              </Button>
+              {workspaces.map((workspace) => (
+                <Button
+                  key={workspace.id}
+                  variant="ghost"
+                  size="icon"
+                  className="mx-auto"
+                  title={workspace.name}
+                  onClick={() => setIsMobileOpen(false)}
+                >
+                  <span className="text-base">{workspace.icon}</span>
+                </Button>
+              ))}
             </div>
           )}
         </div>
@@ -192,6 +376,20 @@ export function Sidebar() {
           </DropdownMenu>
         </div>
       </motion.aside>
+
+      {/* Dialogs */}
+      <CreateWorkspaceDialog
+        open={isCreateDialogOpen}
+        onOpenChange={setIsCreateDialogOpen}
+        onSubmit={handleCreateWorkspace}
+      />
+
+      <DeleteWorkspaceDialog
+        open={!!deleteWorkspaceId}
+        onOpenChange={(open) => !open && setDeleteWorkspaceId(null)}
+        workspaceName={workspaceToDelete?.name || ""}
+        onConfirm={handleDeleteWorkspace}
+      />
     </>
   );
 }
