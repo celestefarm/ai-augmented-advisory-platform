@@ -340,22 +340,19 @@ class AgentResponse(BaseModel):
         self.save(update_fields=['is_streaming', 'streaming_completed_at'])
     
     def calculate_cost(self):
-        """Calculate API cost based on model and tokens"""
+        """Calculate API cost using accurate pricing"""
         if not self.model_selection:
             return 0.0
         
-        model = self.model_selection.model_name
-        pricing = {
-            'claude-sonnet-4-20250514': {'input': 3.0, 'output': 15.0},
-            'claude-opus-4-20250514': {'input': 15.0, 'output': 75.0},
-            'gemini-2.0-flash-exp': {'input': 0.075, 'output': 0.30},
-            'gemini-2.0-pro': {'input': 1.25, 'output': 5.0},
-        }
+        from agents.services.pricing import PricingCalculator
         
-        if model not in pricing:
-            return 0.0
+        calc = PricingCalculator()
+        costs = calc.calculate_cost(
+            model=self.model_selection.model_name,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            cache_creation_tokens=0,
+            cache_read_tokens=0
+        )
         
-        input_cost = (self.prompt_tokens / 1_000_000) * pricing[model]['input']
-        output_cost = (self.completion_tokens / 1_000_000) * pricing[model]['output']
-        
-        return input_cost + output_cost
+        return float(costs['total_cost'])

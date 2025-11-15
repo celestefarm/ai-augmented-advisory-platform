@@ -31,6 +31,7 @@ class ModelName(str, Enum):
     """Available models"""
     CLAUDE_SONNET = "claude-sonnet-4-20250514"
     CLAUDE_OPUS = "claude-opus-4-20250514"
+    CLAUDE_HAIKU = "claude-haiku-4-20250514"
     GEMINI_FLASH = "gemini-2.0-flash-exp"
     GEMINI_PRO = "gemini-2.0-pro"
 
@@ -75,7 +76,7 @@ class ModelRouter:
             reasoning_quality=9,
             research_capability=6,
             speed=7,
-            cost_per_1k_tokens=0.009,  # Average of input/output
+            cost_per_1k_tokens=0.009,
             best_for=[
                 'strategic_decisions',
                 'people_problems',
@@ -89,7 +90,7 @@ class ModelRouter:
             reasoning_quality=10,
             research_capability=7,
             speed=5,
-            cost_per_1k_tokens=0.045,  # Average of input/output
+            cost_per_1k_tokens=0.045,
             best_for=[
                 'high_stakes_decisions',
                 'complex_reasoning',
@@ -98,32 +99,17 @@ class ModelRouter:
                 'synthesis_of_contradictions'
             ]
         ),
-        ModelName.GEMINI_FLASH: ModelCharacteristics(
-            name=ModelName.GEMINI_FLASH,
-            reasoning_quality=6,
+        ModelName.CLAUDE_HAIKU: ModelCharacteristics(
+            name=ModelName.CLAUDE_HAIKU,
+            reasoning_quality=7,
             research_capability=5,
-            speed=10,
-            cost_per_1k_tokens=0.0002,  # Average of input/output
+            speed=9,
+            cost_per_1k_tokens=0.003,
             best_for=[
                 'simple_queries',
-                'quick_facts',
-                'benchmarks',
-                'standard_timelines',
-                'cost_optimization'
-            ]
-        ),
-        ModelName.GEMINI_PRO: ModelCharacteristics(
-            name=ModelName.GEMINI_PRO,
-            reasoning_quality=8,
-            research_capability=10,
-            speed=6,
-            cost_per_1k_tokens=0.003,  # Average of input/output
-            best_for=[
-                'market_research',
-                'competitor_analysis',
-                'web_search_queries',
-                'data_gathering',
-                'trend_analysis'
+                'quick_responses',
+                'cost_optimization',
+                'high_volume'
             ]
         ),
     }

@@ -154,13 +154,20 @@ class ChiefOfStaffAgent:
             response_time = end_time - start_time
             
             # Get final message with usage data
-            final_message = await stream.get_final_message()
-            
-            # Extract token usage
-            usage = final_message.usage
-            prompt_tokens = usage.input_tokens
-            completion_tokens = usage.output_tokens
-            total_tokens = prompt_tokens + completion_tokens
+            try:
+                final_message = await stream.get_final_message()
+                
+                # Extract token usage
+                usage = final_message.usage
+                prompt_tokens = usage.input_tokens
+                completion_tokens = usage.output_tokens
+                total_tokens = prompt_tokens + completion_tokens
+            except Exception as stream_error:
+                # Stream was interrupted, estimate tokens from content
+                logger.warning(f"Stream interrupted, estimating tokens: {str(stream_error)}")
+                prompt_tokens = int(len(system_prompt.split()) * 1.3)
+                completion_tokens = int(len(total_content.split()) * 1.3)
+                total_tokens = prompt_tokens + completion_tokens
             
             # Calculate cost
             cost = self._calculate_cost(prompt_tokens, completion_tokens)
@@ -323,13 +330,10 @@ class ChiefOfStaffAgent:
         
         return messages
     
+
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """
-        Calculate API cost based on tokens
-        
-        Pricing (as of 2025):
-        - Claude Sonnet 4: $3/1M input, $15/1M output
-        - Claude Opus 4: $15/1M input, $75/1M output
+        Calculate API cost based on tokens using accurate December 2024 pricing
         
         Args:
             prompt_tokens: Input tokens
@@ -338,33 +342,19 @@ class ChiefOfStaffAgent:
         Returns:
             Cost in USD
         """
-        # Pricing map
-        pricing = {
-            'claude-sonnet-4-20250514': {
-                'input': 3.0,   # per 1M tokens
-                'output': 15.0
-            },
-            'claude-opus-4-20250514': {
-                'input': 15.0,
-                'output': 75.0
-            },
-            'claude-3-5-sonnet-20241022': {
-                'input': 3.0,
-                'output': 15.0
-            }
-        }
+        from .pricing import PricingCalculator
         
-        # Get pricing for model (default to Sonnet)
-        model_pricing = pricing.get(
-            self.model,
-            pricing['claude-sonnet-4-20250514']
+        calc = PricingCalculator()
+        costs = calc.calculate_cost(
+            model=self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_creation_tokens=0,
+            cache_read_tokens=0
         )
         
-        # Calculate cost
-        input_cost = (prompt_tokens / 1_000_000) * model_pricing['input']
-        output_cost = (completion_tokens / 1_000_000) * model_pricing['output']
-        
-        return input_cost + output_cost
+        return float(costs['total_cost'])
+    
     
     async def test_connection(self) -> bool:
         """
@@ -398,15 +388,13 @@ class ChiefOfStaffAgent:
 # Example usage and testing
 if __name__ == '__main__':
     """Test the Chief of Staff Agent"""
-    import os
     from decouple import config
-    
     
     async def test_agent():
         """Test agent with sample data"""
         
         # Get API key
-        api_key = config('ANTHROPIC_API_KEY', default="")
+        api_key = config('ANTHROPIC_API_KEY', default=None)
         if not api_key:
             print("❌ ERROR: ANTHROPIC_API_KEY not found in environment")
             print("Please set ANTHROPIC_API_KEY in your .env file")
@@ -431,18 +419,18 @@ if __name__ == '__main__':
             return
         
         # Test data
-        test_question = "Should we pivot to enterprise market now, or wait until we have more runway?"
+        test_question = "Whoare you?"
         
         test_context = """
-            User Profile:
-            - Expertise Level: Intermediate
-            - Decision Style: Analytical
-            - Industry: Technology/SaaS
-            - Role: VP Strategy
-            - Recent Interactions: 5
-            - Common Topics: Strategy, Finance
-            - Last Question: "How to price our new product?"
-            """
+User Profile:
+- Expertise Level: Intermediate
+- Decision Style: Analytical
+- Industry: Technology/SaaS
+- Role: VP Strategy
+- Recent Interactions: 5
+- Common Topics: Strategy, Finance
+- Last Question: "How to price our new product?"
+"""
         
         test_tone = {
             'approach': 'validate_then_challenge',
