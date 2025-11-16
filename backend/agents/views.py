@@ -108,7 +108,8 @@ def ask_agent(request):
             streaming_content=generate_streaming_response(
                 user=user,
                 question=question,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                workspace_id=request.data.get('workspace_id')  # ADD THIS
             ),
             content_type='text/event-stream'
         )
@@ -134,7 +135,7 @@ def ask_agent(request):
         )
 
 
-def generate_streaming_response(user, question, conversation_id=None):
+def generate_streaming_response(user, question, conversation_id=None, workspace_id=None):
     """
     Generate streaming SSE response with proper error handling
     
@@ -146,7 +147,7 @@ def generate_streaming_response(user, question, conversation_id=None):
     
     try:
         # Run async pipeline
-        async_gen = run_agent_pipeline(user, question, conversation_id)
+        async_gen = run_agent_pipeline(user, question, conversation_id,  workspace_id)
         
         while True:
             try:
@@ -180,12 +181,14 @@ def generate_streaming_response(user, question, conversation_id=None):
 async def run_agent_pipeline(
     user,
     question: str,
-    conversation_id: Optional[int] = None
+    conversation_id: Optional[int] = None,
+    workspace_id: Optional[int] = None
 ) -> AsyncGenerator[Dict, None]:
     """
-    Complete Week 2 AI pipeline (async)
+    Complete Week 2 AI pipeline (async) - INTEGRATED VERSION
     
     Pipeline stages:
+    0. Link workspace & conversation
     1. Classification (sync)
     2. Emotional detection (sync)
     3. Model selection (sync)
@@ -194,13 +197,42 @@ async def run_agent_pipeline(
     6. Quality validation (sync)
     7. Confidence marking (sync)
     8. Database persistence (sync)
+    9. Create conversation messages
     
     Yields SSE events at each stage
     """
     
     agent_response_obj = None
+    workspace = None
+    conversation = None
     
     try:
+        # STAGE 0: Link Workspace & Conversation
+        logger.info(f"[Pipeline] Stage 0: Linking workspace/conversation")
+        
+        if conversation_id:
+            # Get conversation and its workspace
+            from conversations.models import Conversation
+            conversation = await asyncio.to_thread(
+                Conversation.objects.select_related('workspace').get,
+                id=conversation_id,
+                user=user,
+                is_archived=False
+            )
+            workspace = conversation.workspace
+            logger.info(f"[Pipeline] Using conversation {conversation_id}, workspace {workspace.id if workspace else 'None'}")
+        
+        elif workspace_id:
+            # Get workspace only (quick chat in workspace)
+            from workspaces.models import Workspace
+            workspace = await asyncio.to_thread(
+                Workspace.objects.get,
+                id=workspace_id,
+                user=user,
+                is_archived=False
+            )
+            logger.info(f"[Pipeline] Using workspace {workspace_id}, no conversation")
+        
         # STAGE 1: Question Classification
         logger.info(f"[Pipeline] Stage 1: Classification")
         
@@ -292,7 +324,7 @@ async def run_agent_pipeline(
             user.id
         )
         
-        user_context = memory_service.format_for_prompt(user_memory,  user=user)
+        user_context = memory_service.format_for_prompt(user_memory, user=user)
         
         logger.info(
             f"[Pipeline] Memory: {user_memory.interaction_count} interactions"
@@ -324,11 +356,12 @@ async def run_agent_pipeline(
             temperature=0.7
         )
         
-        # Create response object
+        # Create response object WITH workspace/conversation links
         agent_response_obj = await asyncio.to_thread(
             AgentResponse.objects.create,
             user=user,
-            conversation_id=conversation_id,
+            workspace=workspace,  # NEW: LINKED
+            conversation=conversation,  # UPDATED: LINKED (was conversation_id)
             user_question=question,
             agent_response="",
             classification=classification_obj,
@@ -337,6 +370,12 @@ async def run_agent_pipeline(
             confidence_level='medium',
             confidence_percentage=50,
             is_streaming=True
+        )
+        
+        logger.info(
+            f"[Pipeline] Created AgentResponse {agent_response_obj.id} "
+            f"(workspace={workspace.id if workspace else None}, "
+            f"conversation={conversation.id if conversation else None})"
         )
         
         await asyncio.to_thread(agent_response_obj.mark_streaming_started)
@@ -461,7 +500,35 @@ async def run_agent_pipeline(
         # Invalidate memory cache (forces refresh on next request)
         await asyncio.to_thread(memory_service.invalidate_cache, user.id)
         
-        # STAGE 9: Complete
+        # STAGE 9: Create Conversation Messages
+        if conversation:
+            logger.info(f"[Pipeline] Stage 9: Creating messages")
+            
+            from conversations.models import Message
+            
+            # Create user message
+            user_message = await asyncio.to_thread(
+                Message.objects.create,
+                conversation=conversation,
+                content=question,
+                role='user'
+            )
+            
+            # Create assistant message (linked to agent response)
+            assistant_message = await asyncio.to_thread(
+                Message.objects.create,
+                conversation=conversation,
+                content=full_response,
+                role='assistant',
+                agent_response=agent_response_obj
+            )
+            
+            logger.info(
+                f"[Pipeline] Created messages: "
+                f"user={user_message.id}, assistant={assistant_message.id}"
+            )
+        
+        # STAGE 10: Complete
         logger.info(
             f"[Pipeline] Complete: response_id={agent_response_obj.id}, "
             f"time={response_metadata['response_time']:.2f}s, "
@@ -471,6 +538,8 @@ async def run_agent_pipeline(
         yield {
             'type': 'complete',
             'response_id': str(agent_response_obj.id),
+            'workspace_id': str(workspace.id) if workspace else None,
+            'conversation_id': str(conversation.id) if conversation else None,
             'confidence': {
                 'level': confidence_level,
                 'percentage': confidence_pct,
@@ -513,7 +582,6 @@ async def run_agent_pipeline(
             'stage': 'pipeline',
             'timestamp': datetime.now().isoformat()
         }
-
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

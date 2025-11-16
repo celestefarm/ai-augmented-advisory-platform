@@ -233,6 +233,13 @@ class AgentResponse(BaseModel):
         null=True,
         blank=True
     )
+    workspace = models.ForeignKey(
+        'workspaces.Workspace',
+        on_delete=models.CASCADE,
+        related_name='agent_responses',
+        null=True,
+        blank=True
+    )
     user_question = models.TextField(help_text=_('Original user question'))
     agent_response = models.TextField(help_text=_('Generated agent response'))
     

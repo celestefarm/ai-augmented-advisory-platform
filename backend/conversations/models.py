@@ -165,6 +165,15 @@ class Message(BaseModel):
         related_name='messages',
         db_index=True
     )
+
+    agent_response = models.OneToOneField(
+        'agents.AgentResponse',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='message'
+    )
+    
     role = models.CharField(
         max_length=20,
         choices=ROLE_CHOICES,
