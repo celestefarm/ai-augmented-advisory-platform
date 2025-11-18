@@ -1,17 +1,20 @@
-# agents/services/chief_agent.py
+# agents/services/chief_agent.py - UPDATED WITH OLLAMA
 
 """
 Chief of Staff Agent - Core AI Implementation
 
-Integrates with Anthropic's Claude API to generate intelligent, streaming responses.
-This is the heart of the Week 2 implementation.
+Integrates with multiple LLM providers:
+- Anthropic Claude (primary)
+- Google Gemini (cost optimization) 
+- Ollama (local, free fallback)
 
 Key Responsibilities:
 1. Build personalized prompts using ChiefOfStaffPromptBuilder
-2. Call Anthropic API with streaming
-3. Track performance metrics (tokens, timing, cost)
-4. Handle errors with graceful fallbacks
-5. Yield response chunks for SSE streaming
+2. Route to appropriate LLM provider
+3. Call API with streaming
+4. Track performance metrics (tokens, timing, cost)
+5. Handle errors with graceful fallbacks
+6. Yield response chunks for SSE streaming
 """
 
 import time
@@ -25,16 +28,31 @@ from ..prompts.chief_of_staff import get_chief_of_staff_prompt
 
 logger = logging.getLogger(__name__)
 
+# Try to import Gemini
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("Google Generative AI SDK not installed. Gemini models unavailable.")
+
+# Try to import Ollama
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    logger.info("Ollama not installed. Local LLM unavailable (optional).")
+
 
 class ChiefOfStaffAgent:
     """
     Chief of Staff AI Agent
     
-    Orchestrates the complete AI interaction:
-    - Prompt personalization
-    - API streaming
-    - Performance tracking
-    - Error handling
+    Supports multiple LLM providers:
+    - Claude (Sonnet, Opus, Haiku)
+    - Gemini (2.0 Flash, 2.0 Pro) - optional
+    - Ollama (qwen2.5, llama3.2) - optional, local
     """
     
     def __init__(
@@ -42,26 +60,70 @@ class ChiefOfStaffAgent:
         api_key: str,
         model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 2000,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        google_api_key: Optional[str] = None
     ):
         """
         Initialize Chief of Staff Agent
         
         Args:
             api_key: Anthropic API key
-            model: Claude model to use
+            model: Model name (claude-*, gemini-*, or ollama model)
             max_tokens: Maximum tokens in response
             temperature: Sampling temperature (0-1)
+            google_api_key: Optional Google AI API key for Gemini models
         """
-        self.client = AsyncAnthropic(api_key=api_key)
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         
-        logger.info(
-            f"ChiefOfStaffAgent initialized with model={model}, "
-            f"max_tokens={max_tokens}, temperature={temperature}"
-        )
+        # Determine provider based on model name
+        if 'gemini' in model.lower():
+            self.provider = 'gemini'
+            
+            if not GEMINI_AVAILABLE:
+                raise ImportError(
+                    "Gemini model requested but google-generativeai not installed. "
+                    "Install with: pip install google-generativeai"
+                )
+            
+            if not google_api_key:
+                raise ValueError("google_api_key required for Gemini models")
+            
+            # Configure Gemini
+            genai.configure(api_key=google_api_key)
+            self.gemini_model = genai.GenerativeModel(
+                model_name=model,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            )
+            
+            logger.info(f"ChiefOfStaffAgent initialized with Gemini: {model}")
+        
+        elif 'qwen' in model.lower() or 'llama' in model.lower() or 'mistral' in model.lower():
+            # Ollama models (local)
+            self.provider = 'ollama'
+            
+            if not OLLAMA_AVAILABLE:
+                raise ImportError(
+                    "Ollama model requested but ollama not installed. "
+                    "Install with: pip install ollama\n"
+                    "And install Ollama: https://ollama.com"
+                )
+            
+            logger.info(f"ChiefOfStaffAgent initialized with Ollama: {model}")
+        
+        else:
+            # Default to Claude
+            self.provider = 'claude'
+            self.client = AsyncAnthropic(api_key=api_key)
+            
+            logger.info(
+                f"ChiefOfStaffAgent initialized with Claude: {model}, "
+                f"max_tokens={max_tokens}, temperature={temperature}"
+            )
     
     async def generate_response(
         self,
@@ -73,7 +135,9 @@ class ChiefOfStaffAgent:
         conversation_history: Optional[list] = None
     ) -> AsyncGenerator[Dict[str, any], None]:
         """
-        Generate streaming response from Claude API
+        Generate streaming response from LLM
+        
+        Routes to appropriate provider based on model
         
         Args:
             user_question: User's question
@@ -84,12 +148,188 @@ class ChiefOfStaffAgent:
             conversation_history: Optional previous messages for context
             
         Yields:
-            Dict with response chunks and metadata:
-            {
-                'type': 'start' | 'chunk' | 'complete' | 'error',
-                'content': str (for chunks),
-                'metadata': dict (for complete)
+            Dict with response chunks and metadata
+        """
+        if self.provider == 'ollama':
+            async for event in self._generate_ollama_response(
+                user_question,
+                user_context,
+                emotional_state,
+                tone_adjustment,
+                question_metadata,
+                conversation_history
+            ):
+                yield event
+        
+        elif self.provider == 'gemini':
+            async for event in self._generate_gemini_response(
+                user_question,
+                user_context,
+                emotional_state,
+                tone_adjustment,
+                question_metadata,
+                conversation_history
+            ):
+                yield event
+        
+        else:
+            async for event in self._generate_claude_response(
+                user_question,
+                user_context,
+                emotional_state,
+                tone_adjustment,
+                question_metadata,
+                conversation_history
+            ):
+                yield event
+    
+    async def _generate_ollama_response(
+        self,
+        user_question: str,
+        user_context: str,
+        emotional_state: str,
+        tone_adjustment: Dict[str, str],
+        question_metadata: Dict[str, any],
+        conversation_history: Optional[list] = None
+    ) -> AsyncGenerator[Dict[str, any], None]:
+        """
+        Generate Ollama response (local LLM)
+        """
+        start_time = time.time()
+        total_content = ""
+        
+        try:
+            # 1. Build personalized system prompt
+            logger.info("Building personalized Chief of Staff prompt for Ollama")
+            
+            system_prompt = get_chief_of_staff_prompt(
+                user_context=user_context,
+                emotional_state=emotional_state,
+                tone_adjustment=tone_adjustment,
+                question_metadata=question_metadata,
+                current_question=user_question,
+                conversation_history=conversation_history
+            )
+            
+            # 2. Build messages for Ollama
+            messages = []
+            
+            # Add system prompt as first message
+            messages.append({
+                'role': 'system',
+                'content': system_prompt
+            })
+            
+            # Add conversation history
+            if conversation_history:
+                for msg in conversation_history:
+                    messages.append({
+                        'role': msg['role'],
+                        'content': msg['content']
+                    })
+            
+            # Add current question
+            messages.append({
+                'role': 'user',
+                'content': user_question
+            })
+            
+            logger.info(f"Calling Ollama API - model={self.model}")
+            
+            # Yield start event
+            yield {
+                'type': 'start',
+                'timestamp': time.time(),
+                'model': self.model
             }
+            
+            # 3. Call Ollama with streaming
+            response_stream = await asyncio.to_thread(
+                ollama.chat,
+                model=self.model,
+                messages=messages,
+                stream=True,
+                options={
+                    'temperature': self.temperature,
+                    'num_predict': self.max_tokens
+                }
+            )
+            
+            # 4. Stream response chunks
+            chunk_count = 0
+            for chunk in response_stream:
+                if 'message' in chunk and 'content' in chunk['message']:
+                    content = chunk['message']['content']
+                    if content:
+                        chunk_count += 1
+                        total_content += content
+                        
+                        # Yield chunk
+                        yield {
+                            'type': 'chunk',
+                            'content': content,
+                            'timestamp': time.time()
+                        }
+            
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            # 5. Estimate tokens (Ollama doesn't provide exact counts)
+            prompt_tokens = int(len(system_prompt.split()) * 1.3)
+            completion_tokens = int(len(total_content.split()) * 1.3)
+            total_tokens = prompt_tokens + completion_tokens
+            
+            # 6. Yield completion event
+            metadata = {
+                'response_time': round(response_time, 2),
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': total_tokens,
+                'cost': 0.0,  # Ollama is free!
+                'model': self.model,
+                'full_response': total_content,
+                'success': True
+            }
+            
+            logger.info(
+                f"Ollama response generated - "
+                f"time={response_time:.2f}s, "
+                f"tokens={total_tokens}, "
+                f"cost=$0.00 (local)"
+            )
+            
+            yield {
+                'type': 'complete',
+                'metadata': metadata,
+                'timestamp': time.time()
+            }
+            
+        except Exception as e:
+            error_time = time.time() - start_time
+            logger.error(
+                f"Error generating Ollama response: {str(e)}",
+                exc_info=True
+            )
+            
+            yield {
+                'type': 'error',
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': time.time(),
+                'response_time': round(error_time, 2)
+            }
+    
+    async def _generate_claude_response(
+        self,
+        user_question: str,
+        user_context: str,
+        emotional_state: str,
+        tone_adjustment: Dict[str, str],
+        question_metadata: Dict[str, any],
+        conversation_history: Optional[list] = None
+    ) -> AsyncGenerator[Dict[str, any], None]:
+        """
+        Generate Claude response (existing implementation)
         """
         start_time = time.time()
         total_content = ""
@@ -101,7 +341,9 @@ class ChiefOfStaffAgent:
                 user_context=user_context,
                 emotional_state=emotional_state,
                 tone_adjustment=tone_adjustment,
-                question_metadata=question_metadata
+                question_metadata=question_metadata,
+                current_question=user_question,
+                conversation_history=conversation_history
             )
             
             # 2. Build messages array
@@ -201,11 +443,136 @@ class ChiefOfStaffAgent:
             # Handle errors
             error_time = time.time() - start_time
             logger.error(
-                f"Error generating response: {str(e)}",
+                f"Error generating Claude response: {str(e)}",
                 exc_info=True
             )
             
             # Yield error event
+            yield {
+                'type': 'error',
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'timestamp': time.time(),
+                'response_time': round(error_time, 2)
+            }
+    
+    async def _generate_gemini_response(
+        self,
+        user_question: str,
+        user_context: str,
+        emotional_state: str,
+        tone_adjustment: Dict[str, str],
+        question_metadata: Dict[str, any],
+        conversation_history: Optional[list] = None
+    ) -> AsyncGenerator[Dict[str, any], None]:
+        """
+        Generate Gemini response
+        """
+        start_time = time.time()
+        total_content = ""
+        
+        try:
+            # 1. Build system prompt
+            logger.info("Building personalized Chief of Staff prompt for Gemini")
+            system_prompt = get_chief_of_staff_prompt(
+                user_context=user_context,
+                emotional_state=emotional_state,
+                tone_adjustment=tone_adjustment,
+                question_metadata=question_metadata,
+                current_question=user_question,
+                conversation_history=conversation_history
+            )
+            
+            # Combine system prompt with question
+            full_prompt = f"{system_prompt}\n\nUser Question: {user_question}\n\nResponse:"
+            
+            logger.info(f"Calling Gemini API - model={self.model}")
+            
+            # Yield start event
+            yield {
+                'type': 'start',
+                'timestamp': time.time(),
+                'model': self.model
+            }
+            
+            # 2. Generate streaming response
+            response_text = ""
+            chunk_count = 0
+            
+            # Use grounding if Pro model
+            use_grounding = 'pro' in self.model.lower()
+            
+            if use_grounding:
+                # Enable Google Search grounding for Pro
+                response = await asyncio.to_thread(
+                    self.gemini_model.generate_content,
+                    full_prompt,
+                    stream=True,
+                    tools=[genai.protos.Tool(google_search_retrieval={})]
+                )
+            else:
+                # Standard generation
+                response = await asyncio.to_thread(
+                    self.gemini_model.generate_content,
+                    full_prompt,
+                    stream=True
+                )
+            
+            # 3. Stream chunks
+            for chunk in response:
+                if chunk.text:
+                    chunk_count += 1
+                    response_text += chunk.text
+                    
+                    yield {
+                        'type': 'chunk',
+                        'content': chunk.text,
+                        'timestamp': time.time()
+                    }
+            
+            end_time = time.time()
+            response_time = end_time - start_time
+            
+            # 4. Estimate tokens (Gemini doesn't provide exact counts)
+            prompt_tokens = int(len(full_prompt.split()) * 1.3)
+            completion_tokens = int(len(response_text.split()) * 1.3)
+            total_tokens = prompt_tokens + completion_tokens
+            
+            # Calculate cost
+            cost = self._calculate_gemini_cost(prompt_tokens, completion_tokens)
+            
+            # 5. Yield completion event
+            metadata = {
+                'response_time': round(response_time, 2),
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': total_tokens,
+                'cost': round(cost, 6),
+                'model': self.model,
+                'full_response': response_text,
+                'success': True
+            }
+            
+            logger.info(
+                f"Gemini response generated - "
+                f"time={response_time:.2f}s, "
+                f"tokens={total_tokens}, "
+                f"cost=${cost:.6f}"
+            )
+            
+            yield {
+                'type': 'complete',
+                'metadata': metadata,
+                'timestamp': time.time()
+            }
+            
+        except Exception as e:
+            error_time = time.time() - start_time
+            logger.error(
+                f"Error generating Gemini response: {str(e)}",
+                exc_info=True
+            )
+            
             yield {
                 'type': 'error',
                 'error': str(e),
@@ -226,12 +593,53 @@ class ChiefOfStaffAgent:
         """
         Generate non-streaming response (for testing or non-SSE contexts)
         
-        Args:
-            Same as generate_response
-            
-        Returns:
-            Tuple of (response_text, metadata_dict)
+        Supports Claude and Ollama (not Gemini)
         """
+        if self.provider == 'gemini':
+            raise NotImplementedError("Simple generation not supported for Gemini")
+        
+        if self.provider == 'ollama':
+            # Ollama non-streaming
+            start_time = time.time()
+            
+            system_prompt = get_chief_of_staff_prompt(
+                user_context=user_context,
+                emotional_state=emotional_state,
+                tone_adjustment=tone_adjustment,
+                question_metadata=question_metadata,
+                current_question=user_question,
+                conversation_history=conversation_history
+            )
+            
+            messages = [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_question}
+            ]
+            
+            response = await asyncio.to_thread(
+                ollama.chat,
+                model=self.model,
+                messages=messages,
+                stream=False
+            )
+            
+            response_text = response['message']['content']
+            end_time = time.time()
+            
+            metadata = {
+                'response_time': round(end_time - start_time, 2),
+                'prompt_tokens': int(len(system_prompt.split()) * 1.3),
+                'completion_tokens': int(len(response_text.split()) * 1.3),
+                'total_tokens': 0,  # Calculated below
+                'cost': 0.0,
+                'model': self.model,
+                'success': True
+            }
+            metadata['total_tokens'] = metadata['prompt_tokens'] + metadata['completion_tokens']
+            
+            return response_text, metadata
+        
+        # Claude non-streaming (original code)
         start_time = time.time()
         
         try:
@@ -240,7 +648,9 @@ class ChiefOfStaffAgent:
                 user_context=user_context,
                 emotional_state=emotional_state,
                 tone_adjustment=tone_adjustment,
-                question_metadata=question_metadata
+                question_metadata=question_metadata,
+                current_question=user_question,
+                conversation_history=conversation_history
             )
             
             # 2. Build messages array
@@ -307,7 +717,7 @@ class ChiefOfStaffAgent:
         
         Args:
             user_question: Current user question
-            conversation_history: Previous messages [{'role': 'user'|'assistant', 'content': str}]
+            conversation_history: Previous messages
             
         Returns:
             Messages array in Anthropic format
@@ -330,17 +740,9 @@ class ChiefOfStaffAgent:
         
         return messages
     
-
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """
-        Calculate API cost based on tokens using accurate December 2024 pricing
-        
-        Args:
-            prompt_tokens: Input tokens
-            completion_tokens: Output tokens
-            
-        Returns:
-            Cost in USD
+        Calculate Claude API cost
         """
         from .pricing import PricingCalculator
         
@@ -355,33 +757,85 @@ class ChiefOfStaffAgent:
         
         return float(costs['total_cost'])
     
+    def _calculate_gemini_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """
+        Calculate Gemini API cost
+        
+        Pricing per 1M tokens:
+        - Flash: $0.075 input / $0.30 output
+        - Pro: $1.25 input / $5.00 output
+        """
+        pricing = {
+            'gemini-2.0-flash-exp': {
+                'input': 0.075,
+                'output': 0.30
+            },
+            'gemini-2.0-pro': {
+                'input': 1.25,
+                'output': 5.00
+            }
+        }
+        
+        model_pricing = pricing.get(
+            self.model,
+            pricing['gemini-2.0-flash-exp']  # Default to Flash
+        )
+        
+        input_cost = (prompt_tokens / 1_000_000) * model_pricing['input']
+        output_cost = (completion_tokens / 1_000_000) * model_pricing['output']
+        
+        return input_cost + output_cost
     
     async def test_connection(self) -> bool:
         """
-        Test Anthropic API connection
+        Test LLM API connection
         
         Returns:
             True if connection successful, False otherwise
         """
         try:
-            logger.info("Testing Anthropic API connection...")
+            logger.info(f"Testing {self.provider} API connection...")
             
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=50,
-                messages=[
-                    {
-                        'role': 'user',
-                        'content': 'Hello! Just testing the connection. Reply with OK.'
-                    }
-                ]
-            )
+            if self.provider == 'ollama':
+                # Test Ollama
+                response = await asyncio.to_thread(
+                    ollama.chat,
+                    model=self.model,
+                    messages=[
+                        {'role': 'user', 'content': 'Hello! Reply with OK.'}
+                    ],
+                    stream=False
+                )
+                logger.info(f"✅ Ollama API connection successful")
+                return True
             
-            logger.info("✅ Anthropic API connection successful")
-            return True
+            elif self.provider == 'gemini':
+                # Test Gemini
+                response = await asyncio.to_thread(
+                    self.gemini_model.generate_content,
+                    'Hello! Just testing. Reply with OK.'
+                )
+                logger.info(f"✅ Gemini API connection successful")
+                return True
+            
+            else:
+                # Test Claude
+                response = await self.client.messages.create(
+                    model=self.model,
+                    max_tokens=50,
+                    messages=[
+                        {
+                            'role': 'user',
+                            'content': 'Hello! Just testing the connection. Reply with OK.'
+                        }
+                    ]
+                )
+                
+                logger.info("✅ Claude API connection successful")
+                return True
             
         except Exception as e:
-            logger.error(f"❌ Anthropic API connection failed: {str(e)}")
+            logger.error(f"❌ {self.provider} API connection failed: {str(e)}")
             return False
 
 
@@ -391,132 +845,63 @@ if __name__ == '__main__':
     from decouple import config
     
     async def test_agent():
-        """Test agent with sample data"""
+        """Test agent with all providers"""
         
-        # Get API key
-        api_key = config('ANTHROPIC_API_KEY', default=None)
-        if not api_key:
-            print("❌ ERROR: ANTHROPIC_API_KEY not found in environment")
-            print("Please set ANTHROPIC_API_KEY in your .env file")
+        # Get API keys
+        anthropic_key = config('ANTHROPIC_API_KEY', default=None)
+        google_key = config('GOOGLE_AI_API_KEY', default=None)
+        
+        if not anthropic_key:
+            print("❌ ERROR: ANTHROPIC_API_KEY not found")
             return
         
-        # Initialize agent
-        agent = ChiefOfStaffAgent(
-            api_key=api_key,
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            temperature=0.7
+        # Test Claude
+        print("\n" + "=" * 80)
+        print("TESTING CLAUDE")
+        print("=" * 80)
+        
+        claude_agent = ChiefOfStaffAgent(
+            api_key=anthropic_key,
+            model="claude-sonnet-4-20250514"
         )
         
-        # Test connection
-        print("\n" + "=" * 80)
-        print("TESTING ANTHROPIC API CONNECTION")
-        print("=" * 80)
+        if await claude_agent.test_connection():
+            print("✅ Claude working!")
         
-        connection_ok = await agent.test_connection()
-        if not connection_ok:
-            print("❌ Connection test failed. Check your API key.")
-            return
-        
-        # Test data
-        test_question = "Whoare you?"
-        
-        test_context = """
-User Profile:
-- Expertise Level: Intermediate
-- Decision Style: Analytical
-- Industry: Technology/SaaS
-- Role: VP Strategy
-- Recent Interactions: 5
-- Common Topics: Strategy, Finance
-- Last Question: "How to price our new product?"
-"""
-        
-        test_tone = {
-            'approach': 'validate_then_challenge',
-            'opening': 'acknowledge_concern',
-            'style': 'reassuring_but_realistic',
-            'structure': 'validate → provide_context → reframe_positively'
-        }
-        
-        test_metadata = {
-            'question_type': 'decision',
-            'domains': ['strategy', 'finance'],
-            'urgency': 'important',
-            'complexity': 'complex'
-        }
-        
-        # Test streaming response
-        print("\n" + "=" * 80)
-        print("TESTING STREAMING RESPONSE")
-        print("=" * 80)
-        print(f"\nQuestion: {test_question}\n")
-        print("Response (streaming):")
-        print("-" * 80)
-        
-        full_response = ""
-        metadata = None
-        
-        try:
-            async for event in agent.generate_response(
-                user_question=test_question,
-                user_context=test_context,
-                emotional_state='uncertainty',
-                tone_adjustment=test_tone,
-                question_metadata=test_metadata
-            ):
-                if event['type'] == 'start':
-                    print(f"[Stream started at {event['timestamp']}]")
-                    
-                elif event['type'] == 'chunk':
-                    print(event['content'], end='', flush=True)
-                    full_response += event['content']
-                    
-                elif event['type'] == 'complete':
-                    metadata = event['metadata']
-                    print("\n" + "-" * 80)
-                    print("[Stream completed]")
-                    
-                elif event['type'] == 'error':
-                    print(f"\n❌ Error: {event['error']}")
-                    return
+        # Test Ollama if available
+        if OLLAMA_AVAILABLE:
+            print("\n" + "=" * 80)
+            print("TESTING OLLAMA")
+            print("=" * 80)
             
-            # Print metadata
-            if metadata:
-                print("\n" + "=" * 80)
-                print("RESPONSE METADATA")
-                print("=" * 80)
-                print(f"Response Time: {metadata['response_time']}s")
-                print(f"Prompt Tokens: {metadata['prompt_tokens']}")
-                print(f"Completion Tokens: {metadata['completion_tokens']}")
-                print(f"Total Tokens: {metadata['total_tokens']}")
-                print(f"Cost: ${metadata['cost']:.6f}")
-                print(f"Model: {metadata['model']}")
-                print("=" * 80)
+            try:
+                ollama_agent = ChiefOfStaffAgent(
+                    api_key=anthropic_key,  # Not used for Ollama
+                    model="llama3.2:3b"
+                )
                 
-                # Check performance targets
-                print("\n" + "=" * 80)
-                print("PERFORMANCE TARGETS")
-                print("=" * 80)
-                
-                response_time = metadata['response_time']
-                target_met = 8 <= response_time <= 12
-                
-                print(f"Target: 8-12 seconds")
-                print(f"Actual: {response_time}s")
-                print(f"Status: {'✅ PASS' if target_met else '⚠️  Outside target range'}")
-                print("=" * 80)
-                
-                print("\n✅ Test completed successfully!")
+                if await ollama_agent.test_connection():
+                    print("✅ Ollama working!")
+            except Exception as e:
+                print(f"⚠️ Ollama not available: {str(e)}")
+        else:
+            print("\n⚠️ Ollama not installed (optional)")
+        
+        # Test Gemini if available
+        if google_key and GEMINI_AVAILABLE:
+            print("\n" + "=" * 80)
+            print("TESTING GEMINI")
+            print("=" * 80)
             
-        except Exception as e:
-            print(f"\n❌ Error during test: {str(e)}")
-            import traceback
-            traceback.print_exc()
-    
-    # Run test
-    print("=" * 80)
-    print("CHIEF OF STAFF AGENT - INTEGRATION TEST")
-    print("=" * 80)
+            gemini_agent = ChiefOfStaffAgent(
+                api_key=anthropic_key,
+                google_api_key=google_key,
+                model="gemini-2.0-flash-exp"
+            )
+            
+            if await gemini_agent.test_connection():
+                print("✅ Gemini working!")
+        else:
+            print("\n⚠️ Gemini not configured (optional)")
     
     asyncio.run(test_agent())

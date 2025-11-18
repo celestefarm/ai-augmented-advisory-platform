@@ -36,19 +36,23 @@ class WorkspaceQuerySet(models.QuerySet):
         return self.filter(user=user, is_archived=False)
     
     def with_counts(self):
-        """Annotate with conversation and artifact counts"""
+        """
+        Annotate with conversation and artifact counts
+        Uses different names to avoid property conflicts
+        """
         return self.annotate(
-            # Use different names to avoid conflicts
             total_conversations=Count(
                 'conversations',
-                filter=Q(conversations__is_archived=False)
+                filter=Q(conversations__is_archived=False),
+                distinct=True
             ),
             total_artifacts=Count(
                 'artifacts',
-                filter=Q(artifacts__is_archived=False)
+                filter=Q(artifacts__is_archived=False),
+                distinct=True
             ),
             latest_activity=Max('conversations__last_message_at')
-        )
+        ).order_by('-is_pinned', 'order', '-created_at')
 
 
 class WorkspaceManager(models.Manager):
@@ -133,6 +137,46 @@ class Workspace(BaseModel):
     def __str__(self):
         return f"{self.icon} {self.name}"
 
+    @property
+    def conversation_count(self):
+        """
+        Get conversation count - works with annotations
+        Uses annotated value if available, otherwise queries database
+        """
+        # Check if annotated by with_counts() as 'total_conversations'
+        if hasattr(self, 'total_conversations'):
+            return self.total_conversations
+        # Fallback to direct query
+        return self.conversations.filter(is_archived=False).count()
+
+    @property
+    def artifact_count(self):
+        """
+        Get artifact count - works with annotations
+        Uses annotated value if available, otherwise queries database
+        """
+        # Check if annotated by with_counts() as 'total_artifacts'
+        if hasattr(self, 'total_artifacts'):
+            return self.total_artifacts
+        # Fallback to direct query
+        return self.artifacts.filter(is_archived=False).count()
+
+    @property
+    def last_activity(self):
+        """
+        Get last activity timestamp - works with annotations
+        Uses annotated value if available, otherwise queries database
+        """
+        # Check if annotated by with_counts() as 'latest_activity'
+        if hasattr(self, 'latest_activity'):
+            return self.latest_activity
+        # Fallback to direct query
+        return self.conversations.filter(
+            is_archived=False
+        ).aggregate(
+            last=Max('last_message_at')
+        )['last']
+
     def clean(self):
         """Validate workspace limits"""
         if not self.pk:  # Only check on creation
@@ -149,7 +193,6 @@ class Workspace(BaseModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
-
 
 
 class Artifact(BaseModel):

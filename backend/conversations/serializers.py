@@ -21,8 +21,12 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class ConversationListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for conversation lists"""
-    message_count = serializers.IntegerField(read_only=True)
+    """
+    Lightweight serializer for conversation lists
+    FIXED: Uses annotation-compatible field names
+    """
+    # This will use the annotation 'total_messages' if available
+    message_count = serializers.IntegerField(source='total_messages', read_only=True, default=0)
     is_quick_chat = serializers.BooleanField(read_only=True)
     
     class Meta:
@@ -43,9 +47,12 @@ class ConversationListSerializer(serializers.ModelSerializer):
 
 
 class ConversationDetailSerializer(serializers.ModelSerializer):
-    """Detailed serializer with messages"""
+    """
+    Detailed serializer with messages
+    FIXED: Uses SerializerMethodField for flexibility
+    """
     messages = MessageSerializer(many=True, read_only=True)
-    message_count = serializers.IntegerField(read_only=True)
+    message_count = serializers.SerializerMethodField()
     is_quick_chat = serializers.BooleanField(read_only=True)
     
     class Meta:
@@ -65,23 +72,48 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = ('id', 'created_at', 'updated_at', 'last_message_at')
+    
+    def get_message_count(self, obj):
+        """
+        Get message count - uses annotation if available, otherwise counts
+        This matches the property behavior in the model
+        """
+        if hasattr(obj, 'total_messages'):
+            return obj.total_messages
+        return obj.messages.count()
 
 
 class CreateConversationSerializer(serializers.ModelSerializer):
     """Serializer for creating conversations"""
+    workspace_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     
     class Meta:
         model = Conversation
-        fields = ('workspace', 'title')
+        fields = ('workspace_id', 'title')
 
-    def validate_workspace(self, value):
+    def validate_workspace_id(self, value):
         """Ensure workspace belongs to user"""
+        if not value:
+            return None
+            
         request = self.context.get('request')
-        if value and value.user != request.user:
-            raise serializers.ValidationError('Workspace does not belong to you')
-        return value
-
-
+        try:
+            from workspaces.models import Workspace
+            workspace = Workspace.objects.get(id=value, user=request.user, is_archived=False)
+            return workspace.id
+        except Workspace.DoesNotExist:
+            raise serializers.ValidationError('Workspace does not exist or does not belong to you')
+    
+    def create(self, validated_data):
+        """Create conversation with workspace"""
+        workspace_id = validated_data.pop('workspace_id', None)
+        
+        conversation = Conversation.objects.create(
+            workspace_id=workspace_id,
+            **validated_data
+        )
+        return conversation
+    
 class CreateMessageSerializer(serializers.ModelSerializer):
     """Serializer for creating messages"""
     

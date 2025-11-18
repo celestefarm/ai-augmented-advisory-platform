@@ -17,7 +17,6 @@ import {
   ChevronDown,
   ChevronUp,
   Home,
-  Zap,
   MoreVertical,
   Trash2,
   Edit,
@@ -35,15 +34,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { CreateWorkspaceDialog } from "@/components/dialogs/CreateWorkspaceDialog";
+import { CreateWorkspaceDialog, CreateChatDialog } from "@/components/dialogs/CreateWorkspaceDialog";
 import { DeleteWorkspaceDialog } from "@/components/dialogs/DeleteWorkspaceDialog";
 
-import { ROUTES } from "@/routes";
+import { ROUTES, getChatRoute, getWorkspaceChatRoute } from "@/routes";
 
 export function Sidebar() {
   const router = useRouter();
-  const { 
-    clearChat, 
+  const {
     user, 
     logout,
     workspaces,
@@ -51,6 +49,14 @@ export function Sidebar() {
     createWorkspace,
     deleteWorkspace,
     isLoadingWorkspaces,
+    conversations,
+    fetchConversations,
+    deleteConversation,
+    isLoadingConversations,
+    setCurrentWorkspace,
+    setCurrentConversation,
+    currentConversationId,
+    loadConversationMessages,
   } = useStore();
   
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -59,35 +65,32 @@ export function Sidebar() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteWorkspaceId, setDeleteWorkspaceId] = useState<string | null>(null);
 
-  // Fetch workspaces on mount
+  // Fetch workspaces and conversations on mount
   useEffect(() => {
     if (user) {
       fetchWorkspaces();
+      fetchConversations();
     }
-  }, [user]);
-
-  useEffect(() => {
-      console.log('Workspaces:', workspaces);
-      console.log('Type:', typeof workspaces);
-      console.log('Is Array:', Array.isArray(workspaces));
-    }, [workspaces]);
+  }, [user, fetchWorkspaces, fetchConversations]);
 
   const handleLogout = async () => {
     await logout();
     router.push(ROUTES.login);
   };
 
-  const handleNewChat = () => {
-    clearChat();
-    setIsMobileOpen(false);
-  };
 
-  const toggleWorkspace = (workspaceId: string) => {
-    setExpandedWorkspaces(prev =>
-      prev.includes(workspaceId)
-        ? prev.filter(id => id !== workspaceId)
-        : [...prev, workspaceId]
-    );
+  const toggleWorkspace = async (workspaceId: string) => {
+    // Close all other workspaces (only one open at a time)
+    const isCurrentlyExpanded = expandedWorkspaces.includes(workspaceId);
+    
+    if (isCurrentlyExpanded) {
+      // Close this workspace
+      setExpandedWorkspaces([]);
+    } else {
+      // Close all others and open this one
+      setExpandedWorkspaces([workspaceId]);
+      
+    }
   };
 
   const handleCreateWorkspace = async (data: {
@@ -105,7 +108,42 @@ export function Sidebar() {
     }
   };
 
+  const handleDeleteConversation = async (conversationId: string) => {
+    if (confirm('Are you sure you want to delete this conversation?')) {
+      await deleteConversation(conversationId);
+    }
+  };
+
+  const handleSelectConversation = async (conversationId: string, workspaceId?: string | null) => {
+    setCurrentConversation(conversationId);
+    setCurrentWorkspace(workspaceId || null);
+    
+    // Load messages
+    if (loadConversationMessages) {
+      await loadConversationMessages(conversationId);
+    }
+    
+    // Navigate to URL with conversation ID
+    if (workspaceId) {
+      router.push(getWorkspaceChatRoute(workspaceId, conversationId));
+    } else {
+      router.push(getChatRoute(conversationId));
+    }
+    
+    setIsMobileOpen(false);
+  };
+
   const workspaceToDelete = workspaces?.find(w => w.id === deleteWorkspaceId);
+
+  // Get conversations for each workspace
+  const getWorkspaceConversations = (workspaceId: string) => {
+    return conversations.filter(c => c.workspace === workspaceId);
+  };
+
+  // Get quick chats (conversations without workspace)
+  const getQuickChats = () => {
+    return conversations.filter(c => !c.workspace);
+  };
 
   return (
     <>
@@ -175,17 +213,14 @@ export function Sidebar() {
           >
             <Folder className="h-4 w-4 shrink-0" />
             {!isSidebarCollapsed && <span>New Workspace</span>}
+
           </Button>
-          
-          <Button
-            onClick={handleNewChat}
-            className={`w-full gap-2 ${isSidebarCollapsed ? "justify-center px-0" : "justify-start"}`}
-            variant="outline"
-            title={isSidebarCollapsed ? "New chat" : undefined}
-          >
-            <Plus className="h-4 w-4 shrink-0" />
-            {!isSidebarCollapsed && <span>New Chat</span>}
-          </Button>
+
+          <CreateChatDialog  workspaces={workspaces} isSidebarCollapsed={isSidebarCollapsed} onChatCreated={() => {
+              fetchConversations();
+              setIsMobileOpen(false);
+            }}
+          />
         </div>
 
         {/* Navigation */}
@@ -193,7 +228,7 @@ export function Sidebar() {
           {!isSidebarCollapsed ? (
             <>
               {/* Home */}
-              <div className="space-y-1 py-2">
+              {/* <div className="space-y-1 py-2">
                 <Button
                   variant="ghost"
                   className="w-full justify-start gap-3"
@@ -202,7 +237,7 @@ export function Sidebar() {
                   <Home className="h-4 w-4 shrink-0" />
                   <span>Home</span>
                 </Button>
-              </div>
+              </div> */}
 
               {/* Workspaces Section */}
               <div className="mt-4 pb-4">
@@ -225,75 +260,113 @@ export function Sidebar() {
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {workspaces?.map((workspace) => (
-                      <div key={workspace.id}>
-                        {/* Workspace Item */}
-                        <div className="group relative">
-                          <Button
-                            variant="ghost"
-                            className="h-auto w-full justify-between py-2 pr-8 text-left"
-                            onClick={() => toggleWorkspace(workspace.id)}
-                          >
-                            <div className="flex items-center gap-2 overflow-hidden">
-                              <span className="shrink-0 text-base">{workspace.icon}</span>
-                              <span className="truncate text-sm font-medium">
-                                {workspace.name}
-                              </span>
+                    {workspaces?.map((workspace) => {
+                      const workspaceConversations = getWorkspaceConversations(workspace.id);
+                      const isExpanded = expandedWorkspaces.includes(workspace.id);
+                      
+                      return (
+                        <div key={workspace.id}>
+                          {/* Workspace Item */}
+                          <div className="group relative">
+                            <Button
+                              variant="ghost"
+                              className="h-auto w-full justify-between py-2 pr-8 text-left"
+                              onClick={() => toggleWorkspace(workspace.id)}
+                            >
+                              <div className="flex items-center gap-2 overflow-hidden">
+                                <span className="shrink-0 text-base">{workspace.icon}</span>
+                                <span className="truncate text-sm font-medium">
+                                  {workspace.name}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Badge variant="outline" className="text-xs h-5 px-1.5">
+                                  {workspace.conversation_count}
+                                </Badge>
+                                {isExpanded ? (
+                                  <ChevronUp className="h-3 w-3" />
+                                ) : (
+                                  <ChevronDown className="h-3 w-3" />
+                                )}
+                              </div>
+                            </Button>
+
+                            {/* Workspace Actions */}
+                            <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreVertical className="h-3 w-3" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem>
+                                    <Edit className="mr-2 h-4 w-4" />
+                                    <span>Rename</span>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() => setDeleteWorkspaceId(workspace.id)}
+                                    className="text-destructive"
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    <span>Delete</span>
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <Badge variant="outline" className="text-xs h-5 px-1.5">
-                                {workspace.conversation_count}
-                              </Badge>
-                              {expandedWorkspaces.includes(workspace.id) ? (
-                                <ChevronUp className="h-3 w-3" />
+                          </div>
+
+                          {/* Conversations in Workspace */}
+                          {isExpanded && (
+                            <div className="ml-6 space-y-1 border-l border-border pl-2 mt-1">
+                              {isLoadingConversations ? (
+                                <div className="px-3 py-2 text-xs text-muted-foreground">
+                                  Loading...
+                                </div>
+                              ) : workspaceConversations.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-muted-foreground">
+                                  No conversations yet
+                                </div>
                               ) : (
-                                <ChevronDown className="h-3 w-3" />
+                                workspaceConversations.map((conversation) => (
+                                  <div key={conversation.id} className="group/conv relative">
+                                    <Button
+                                      variant="ghost"
+                                      className={`w-full justify-start text-xs py-1.5 h-auto pr-8 ${
+                                        currentConversationId === conversation.id
+                                          ? "bg-primary/10"
+                                          : ""
+                                      }`}
+                                      onClick={() => handleSelectConversation(conversation.id, workspace.id)}
+                                    >
+                                      <MessageSquare className="mr-2 h-3 w-3 shrink-0" />
+                                      <span className="truncate">{conversation.title}</span>
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="absolute right-1 top-1/2 -translate-y-1/2 h-5 w-5 opacity-0 group-hover/conv:opacity-100"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteConversation(conversation.id);
+                                      }}
+                                    >
+                                      <Trash2 className="h-3 w-3 text-destructive" />
+                                    </Button>
+                                  </div>
+                                ))
                               )}
                             </div>
-                          </Button>
-
-                          {/* Workspace Actions */}
-                          <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MoreVertical className="h-3 w-3" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem>
-                                  <Edit className="mr-2 h-4 w-4" />
-                                  <span>Rename</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => setDeleteWorkspaceId(workspace.id)}
-                                  className="text-destructive"
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  <span>Delete</span>
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
+                          )}
                         </div>
-
-                        {/* Conversations in Workspace */}
-                        {expandedWorkspaces.includes(workspace.id) && (
-                          <div className="ml-6 space-y-1 border-l border-border pl-2 mt-1">
-                            {/* TODO: Add real conversations */}
-                            <div className="px-3 py-2 text-xs text-muted-foreground">
-                              No conversations yet
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -304,9 +377,39 @@ export function Sidebar() {
                   Quick Chats
                 </h3>
                 <div className="space-y-1">
-                  <div className="px-3 py-2 text-xs text-muted-foreground">
-                    No quick chats yet
-                  </div>
+                  {getQuickChats().length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      No quick chats yet
+                    </div>
+                  ) : (
+                    getQuickChats().map((conversation) => (
+                      <div key={conversation.id} className="group/conv relative">
+                        <Button
+                          variant="ghost"
+                          className={`w-full justify-start text-xs py-1.5 h-auto pr-8 ${
+                            currentConversationId === conversation.id
+                              ? "bg-primary/10"
+                              : ""
+                          }`}
+                          onClick={() => handleSelectConversation(conversation.id, null)}
+                        >
+                          <MessageSquare className="mr-2 h-3 w-3 shrink-0" />
+                          <span className="truncate">{conversation.title}</span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-1 top-1/2 -translate-y-1/2 h-5 w-5 opacity-0 group-hover/conv:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteConversation(conversation.id);
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3 text-destructive" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </>

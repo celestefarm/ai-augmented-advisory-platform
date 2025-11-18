@@ -22,5 +22,12 @@ export const ROUTES = {
   ...PROTECTED_ROUTES,
 } as const;
 
+// Helper functions for dynamic routes
+export const getChatRoute = (conversationId: string) => 
+  `/dashboard?conversation=${conversationId}`;
+
+export const getWorkspaceChatRoute = (workspaceId: string, conversationId: string) => 
+  `/dashboard?workspace=${workspaceId}&conversation=${conversationId}`;
+
 export const PUBLIC_ROUTES_PATHS: string[] = Object.values(PUBLIC_ROUTES);
 export const PROTECTED_ROUTES_PATHS: string[] = Object.values(PROTECTED_ROUTES);

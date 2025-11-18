@@ -88,7 +88,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         """Filter messages by user's conversations"""
         return Message.objects.filter(
             conversation__user=self.request.user
-        ).select_related('conversation')
+        ).select_related('conversation').order_by('created_at')
     
     def get_serializer_class(self):
         """Use different serializers for different actions"""

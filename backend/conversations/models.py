@@ -42,11 +42,14 @@ class ConversationQuerySet(models.QuerySet):
         return self.filter(workspace=workspace, is_archived=False)
     
     def with_counts(self):
-        """Annotate with message counts"""
+        """
+        Annotate with message counts
+        FIXED: Use different name to avoid property conflict
+        """
         return self.annotate(
-            message_count=Count('messages'),
+            total_messages=Count('messages'),  # Changed from message_count
             last_message_time=Max('messages__created_at')
-        )
+        ).order_by('-is_pinned', '-last_message_at', '-created_at')
 
 
 class ConversationManager(models.Manager):
@@ -134,7 +137,14 @@ class Conversation(BaseModel):
 
     @property
     def message_count(self):
-        """Get message count"""
+        """
+        Get message count - FIXED to work with annotations
+        Uses annotated value if available, otherwise queries database
+        """
+        # Check if annotated by with_counts() as 'total_messages'
+        if hasattr(self, 'total_messages'):
+            return self.total_messages
+        # Fallback to direct query
         return self.messages.count()
 
     @property

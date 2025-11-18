@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Dict, Optional
+from .conversation_context import ConversationContext
 
 
 class ChiefOfStaffPromptBuilder:
@@ -404,28 +405,66 @@ def get_chief_of_staff_prompt(
     user_context: str,
     emotional_state: str,
     tone_adjustment: Dict[str, str],
-    question_metadata: Dict[str, any]
+    question_metadata: Dict[str, any],
+    current_question: str = "", 
+    conversation_history: Optional[list] = None
 ) -> str:
     """
-    Build complete Chief of Staff prompt (convenience function)
+    Build complete personalized prompt with conversation awareness
     
     Args:
         user_context: User's expertise, style, recent interactions
         emotional_state: Detected emotional state
         tone_adjustment: Tone adjustment dictionary
         question_metadata: Question classification metadata
-        
+        current_question: Current user question (for brevity detection)
+        conversation_history: Previous messages in conversation
         
     Returns:
         Complete system prompt string
     """
     builder = ChiefOfStaffPromptBuilder()
-    return builder.build_prompt(
+    
+    # Build conversation memory
+    conversation_memory = ConversationContext.build_conversation_memory(
+        messages=conversation_history or [],
+        current_question=current_question
+    )
+    
+    # Get style instruction
+    style_instruction = ConversationContext.format_style_instruction(
+        conversation_memory=conversation_memory,
+        question_type=question_metadata.get('question_type', 'exploration')
+    )
+    
+    # Build base prompt
+    base_prompt = builder.build_prompt(
         user_context=user_context,
         emotional_state=emotional_state,
         tone_adjustment=tone_adjustment,
         question_metadata=question_metadata
     )
+    
+    # Insert style instruction BEFORE final reminders
+    # This makes it more prominent
+    parts = base_prompt.split("# FINAL EXECUTION REMINDERS")
+    
+    if len(parts) == 2:
+        enhanced_prompt = (
+            parts[0] + 
+            "\n" + "=" * 80 + "\n" +
+            "# CONVERSATION STYLE OVERRIDE" + "\n" +
+            "=" * 80 + "\n" +
+            style_instruction + "\n" +
+            "=" * 80 + "\n" +
+            "# FINAL EXECUTION REMINDERS" + 
+            parts[1]
+        )
+    else:
+        # Fallback if structure changed
+        enhanced_prompt = base_prompt + "\n" + style_instruction
+    
+    return enhanced_prompt
 
 
 # Example usage and testing

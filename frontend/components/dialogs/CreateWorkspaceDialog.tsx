@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 
 import {
   Dialog,
@@ -10,11 +10,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { createConversation } from "@/services/conversationService"; // Changed
+import { Workspace } from "@/services/workspaceService"; // Added
 
 interface CreateWorkspaceDialogProps {
   open: boolean;
@@ -140,6 +143,104 @@ export function CreateWorkspaceDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface CreateChatDialogProps {
+  workspaceId?: string | null;
+  workspaces: Workspace[];
+  isSidebarCollapsed?: boolean;
+  onChatCreated?: () => void;
+}
+
+export function CreateChatDialog({ 
+  workspaceId: initialWorkspaceId, 
+  workspaces,
+  isSidebarCollapsed = false,
+  onChatCreated 
+}: CreateChatDialogProps) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(initialWorkspaceId || "");
+  const [loading, setLoading] = useState(false);
+
+  const handleCreate = async () => {
+    setLoading(true);
+    try {
+      await createConversation({
+        title: title.trim() || "New Chat",
+        workspace_id: selectedWorkspaceId || undefined,
+      });
+      setTitle("");
+      setSelectedWorkspaceId("");
+      setOpen(false);
+      onChatCreated?.();
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button 
+          variant="outline" 
+          className={`w-full gap-2 ${isSidebarCollapsed ? "justify-center px-0" : "justify-start"}`}
+          title={isSidebarCollapsed ? "New chat" : undefined}
+        >
+          <Plus className="h-4 w-4 shrink-0" />
+          {!isSidebarCollapsed && <span>New Chat</span>}
+        </Button>
+      </DialogTrigger>
+            <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create New Chat</DialogTitle>
+          <DialogDescription>
+            Start a new conversation
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="chat-title">Title (Optional)</Label>
+            <Input
+              id="chat-title"
+              placeholder="Chat title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="workspace-select">Workspace (Optional)</Label>
+            <select
+              id="workspace-select"
+              value={selectedWorkspaceId}
+              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">Quick Chat (No Workspace)</option>
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.icon} {workspace.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={loading}>
+              {loading ? "Creating..." : "Create Chat"}
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

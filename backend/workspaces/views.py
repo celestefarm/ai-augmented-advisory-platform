@@ -37,7 +37,7 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     destroy: Archive workspace (soft delete)
     """
     permission_classes = [IsAuthenticated]
-    pagination_class = StandardResultsSetPagination  # Add this
+    pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         """Filter workspaces by user"""
@@ -63,6 +63,28 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         instance.is_archived = True
         instance.save(update_fields=['is_archived'])
         logger.info(f"Workspace archived: {instance.id} by user {self.request.user.id}")
+    
+    @action(detail=True, methods=['get'])
+    def conversations(self, request, pk=None):
+        """
+        Get conversations in a workspace
+        GET /api/workspaces/:id/conversations/
+        """
+        workspace = self.get_object()
+        
+        # Import here to avoid circular imports
+        from conversations.models import Conversation
+        from conversations.serializers import ConversationListSerializer
+        
+        # Get conversations for this workspace
+        conversations = Conversation.objects.filter(
+            workspace=workspace,
+            is_archived=False
+        ).with_counts()
+        
+        # Serialize and return
+        serializer = ConversationListSerializer(conversations, many=True)
+        return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
     def pin(self, request, pk=None):
@@ -115,7 +137,7 @@ class ArtifactViewSet(viewsets.ModelViewSet):
     """
     permission_classes = [IsAuthenticated]
     serializer_class = ArtifactSerializer
-    pagination_class = StandardResultsSetPagination  # Add this
+    pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         """Filter artifacts by user's workspaces"""

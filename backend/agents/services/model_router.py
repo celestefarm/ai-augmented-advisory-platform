@@ -25,6 +25,8 @@ Pricing (per 1M tokens):
 from typing import Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
+import logging
+logger = logging.getLogger(__name__)
 
 
 class ModelName(str, Enum):
@@ -32,6 +34,7 @@ class ModelName(str, Enum):
     CLAUDE_SONNET = "claude-sonnet-4-20250514"
     CLAUDE_OPUS = "claude-opus-4-20250514"
     CLAUDE_HAIKU = "claude-haiku-4-20250514"
+    OLLAMA_FAST = "llama3.1:8b"
     GEMINI_FLASH = "gemini-2.0-flash-exp"
     GEMINI_PRO = "gemini-2.0-pro"
 
@@ -112,6 +115,49 @@ class ModelRouter:
                 'high_volume'
             ]
         ),
+        ModelName.OLLAMA_FAST: ModelCharacteristics(
+            name=ModelName.OLLAMA_FAST,
+            reasoning_quality=6,
+            research_capability=5,
+            speed=10,  # Very fast (local)
+            cost_per_1k_tokens=0.0,  # FREE!
+            best_for=[
+                'simple_queries',
+                'fast_responses',
+                'unlimited_use',
+                'privacy',
+                'fallback',
+                'testing'
+            ]
+        ),
+        ModelName.GEMINI_FLASH: ModelCharacteristics(
+            name=ModelName.GEMINI_FLASH,
+            reasoning_quality=6,
+            research_capability=5,
+            speed=10,
+            cost_per_1k_tokens=0.0002,  # Average of input/output
+            best_for=[
+                'simple_queries',
+                'fast_responses',
+                'cost_optimization',
+                'high_volume',
+                'routine_questions'
+            ]
+        ),
+        ModelName.GEMINI_PRO: ModelCharacteristics(
+            name=ModelName.GEMINI_PRO,
+            reasoning_quality=7,
+            research_capability=9,  # Best for research with grounding
+            speed=6,
+            cost_per_1k_tokens=0.003,  # Average of input/output
+            best_for=[
+                'market_research',
+                'exploration',
+                'grounded_search',
+                'comprehensive_analysis',
+                'trend_analysis'
+            ]
+        ),
     }
     
     def select_model(
@@ -189,46 +235,44 @@ class ModelRouter:
         Returns:
             Selected model name
         """
-        # RULE 1: Market research queries → Gemini Pro (best for research)
-        if 'market' in domains and question_type == 'exploration':
-            return ModelName.GEMINI_PRO
-        
-        # RULE 2: Simple routine queries → Gemini Flash (fast and cheap)
+        # RULE 1: Simple routine queries → Ollama (free, fast, unlimited)
         if complexity == 'simple' and urgency == 'routine':
-            return ModelName.GEMINI_FLASH
+            logger.info("Routing: Simple+Routine → Ollama (free, local)")
+            return ModelName.OLLAMA_FAST
         
-        # RULE 3: Crisis + high urgency → Claude Sonnet (fast reasoning)
+        # RULE 2: Crisis + urgent → Claude (need reliability)
         if urgency in ['crisis', 'urgent']:
-            # Unless it's also highly complex
             if complexity == 'complex':
-                return ModelName.CLAUDE_OPUS  # Need best reasoning despite urgency
+                logger.info("Routing: Crisis+Complex → Claude Opus")
+                return ModelName.CLAUDE_OPUS
+            logger.info("Routing: Crisis → Claude Sonnet")
             return ModelName.CLAUDE_SONNET
         
-        # RULE 4: Complex decisions + multiple domains → Claude Opus
-        if complexity == 'complex' and len(domains) >= 3:
+        # RULE 3: Research-heavy → Claude (better for synthesis)
+        if 'research' in domains or 'strategy' in domains:
+            if complexity == 'complex':
+                logger.info("Routing: Research+Complex → Claude Opus")
+                return ModelName.CLAUDE_OPUS
+            logger.info("Routing: Research → Claude Sonnet")
+            return ModelName.CLAUDE_SONNET
+        
+        # RULE 4: People/emotional questions → Claude (better empathy)
+        if 'people' in domains or emotional_state in ['anxiety', 'uncertainty']:
+            logger.info("Routing: People/Emotional → Claude Sonnet")
+            return ModelName.CLAUDE_SONNET
+        
+        # RULE 5: Medium complexity → Claude Sonnet
+        if complexity == 'medium':
+            logger.info("Routing: Medium → Claude Sonnet")
+            return ModelName.CLAUDE_SONNET
+        
+        # RULE 6: Complex → Claude Opus
+        if complexity == 'complex':
+            logger.info("Routing: Complex → Claude Opus")
             return ModelName.CLAUDE_OPUS
         
-        # RULE 5: People/organizational questions + complexity → Claude Sonnet/Opus
-        if 'people' in domains:
-            if complexity == 'complex' or emotional_state == 'anxiety':
-                return ModelName.CLAUDE_OPUS  # Need best psychological nuance
-            return ModelName.CLAUDE_SONNET
-        
-        # RULE 6: Financial calculations → Claude Sonnet (good at math)
-        if 'finance' in domains and question_type == 'decision':
-            return ModelName.CLAUDE_SONNET
-        
-        # RULE 7: Strategic decisions + medium-high complexity → Claude Sonnet
-        if 'strategy' in domains and complexity in ['medium', 'complex']:
-            if complexity == 'complex':
-                return ModelName.CLAUDE_OPUS
-            return ModelName.CLAUDE_SONNET
-        
-        # RULE 8: Execution planning → Claude Sonnet (logical sequencing)
-        if 'execution' in domains:
-            return ModelName.CLAUDE_SONNET
-        
-        # DEFAULT: Claude Sonnet (best all-rounder)
+        # DEFAULT: Claude Sonnet (most reliable)
+        logger.info("Routing: Default → Claude Sonnet")
         return ModelName.CLAUDE_SONNET
     
     def _estimate_performance(

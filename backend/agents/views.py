@@ -177,7 +177,6 @@ def generate_streaming_response(user, question, conversation_id=None, workspace_
         loop.close()
         logger.debug("Streaming loop closed")
 
-
 async def run_agent_pipeline(
     user,
     question: str,
@@ -185,7 +184,7 @@ async def run_agent_pipeline(
     workspace_id: Optional[int] = None
 ) -> AsyncGenerator[Dict, None]:
     """
-    Complete Week 2 AI pipeline (async) - INTEGRATED VERSION
+    Complete Week 2 AI pipeline (async) - WITH BREVITY SUPPORT
     
     Pipeline stages:
     0. Link workspace & conversation
@@ -193,7 +192,7 @@ async def run_agent_pipeline(
     2. Emotional detection (sync)
     3. Model selection (sync)
     4. Memory retrieval (sync with cache)
-    5. AI generation (async streaming)
+    5. AI generation (async streaming) - NOW WITH CONVERSATION HISTORY
     6. Quality validation (sync)
     7. Confidence marking (sync)
     8. Database persistence (sync)
@@ -348,9 +347,11 @@ async def run_agent_pipeline(
             'timestamp': datetime.now().isoformat()
         }
         
-        api_key = config('ANTHROPIC_API_KEY')
+        anthropic_key = config('ANTHROPIC_API_KEY')
+        google_key = config('GOOGLE_AI_API_KEY', default=None)
         agent = ChiefOfStaffAgent(
-            api_key=api_key,
+            api_key=anthropic_key,
+            google_api_key=google_key,
             model=model_selection_result.model_name,
             max_tokens=2000,
             temperature=0.7
@@ -360,8 +361,8 @@ async def run_agent_pipeline(
         agent_response_obj = await asyncio.to_thread(
             AgentResponse.objects.create,
             user=user,
-            workspace=workspace,  # NEW: LINKED
-            conversation=conversation,  # UPDATED: LINKED (was conversation_id)
+            workspace=workspace,
+            conversation=conversation,
             user_question=question,
             agent_response="",
             classification=classification_obj,
@@ -380,17 +381,42 @@ async def run_agent_pipeline(
         
         await asyncio.to_thread(agent_response_obj.mark_streaming_started)
         
+        # NEW: Build conversation history for brevity detection
+        conversation_messages = []
+        if conversation:
+            from conversations.models import Message
+            
+            # Get last 10 messages for context (5 exchanges)
+            recent_messages = await asyncio.to_thread(
+                lambda: list(Message.objects.filter(
+                    conversation=conversation
+                ).order_by('-created_at')[:10])
+            )
+            
+            # Reverse to chronological order
+            for msg in reversed(recent_messages):
+                conversation_messages.append({
+                    'role': msg.role,
+                    'content': msg.content
+                })
+            
+            logger.info(
+                f"[Pipeline] Loaded {len(conversation_messages)} messages for context"
+            )
+        
         # Stream AI response
         full_response = ""
         response_metadata = None
         chunk_count = 0
         
+        # NEW: Pass conversation_history to enable brevity detection
         async for event in agent.generate_response(
             user_question=question,
             user_context=user_context,
             emotional_state=emotional_result.state,
             tone_adjustment=emotional_result.tone_adjustment,
-            question_metadata=question_metadata
+            question_metadata=question_metadata,
+            conversation_history=conversation_messages  # NEW: Pass conversation history
         ):
             if event['type'] == 'start':
                 yield {
