@@ -1,4 +1,4 @@
-"use client";
+// components/common/ThemeScript.tsx
 
 // This script is injected into the page to prevent theme flashing.
 // It runs before React hydrates, so it directly manipulates the DOM.
@@ -38,6 +38,7 @@ export function ThemeScript() {
       dangerouslySetInnerHTML={{
         __html: getThemeScript(),
       }}
+      suppressHydrationWarning
     />
   );
 }

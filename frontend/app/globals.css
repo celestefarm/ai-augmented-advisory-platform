@@ -7,6 +7,7 @@
 @theme inline {
   /* Fonts */
   --font-inter: var(--font-inter);
+  --font-cinzel: var(--font-cinzel);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -119,6 +120,59 @@
   --shadow-color: rgba(255, 255, 255, 0.1);
   --shadow-color-lg: rgba(255, 255, 255, 0.15);
 }
+
+
+:root {
+  --background: #050505;
+  --foreground: #ffffff;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, .font-display {
+  font-family: 'Cinzel', serif;
+}
+
+/* Hide scrollbar for cleaner luxury feel but allow scrolling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 1s ease-out forwards;
+  }
+  .animate-shine {
+    animation: shine 3s infinite;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shine {
+  0% { left: -100%; }
+  20% { left: 100%; }
+  100% { left: 100%; }
+}
+
 
 /* Dark mode scrollbar styles */
 @layer base {
