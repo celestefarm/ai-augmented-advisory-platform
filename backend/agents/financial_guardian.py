@@ -1,0 +1,304 @@
+# agents/financial_guardian.py
+
+"""
+FINANCIAL GUARDIAN AGENT
+Mission: Quantitative reality checking and financial analysis
+
+Core Capabilities:
+1. Financial calculations with work shown
+2. Scenario modeling (best/realistic/worst cases)
+3. Unit economics breakdown (CAC, LTV, payback)
+4. Cash flow and runway analysis
+5. ROI and payback period calculations
+
+Model Strategy:
+- Primary: Claude Sonnet (excellent math reasoning)
+- Temperature: 0.5 (lower for accuracy)
+- No external tools needed (pure reasoning)
+
+Output: Financial analysis with calculations, scenarios, constraints, and confidence marking
+"""
+
+import time
+import asyncio
+from typing import Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+from anthropic import AsyncAnthropic
+
+
+class FinancialGuardianAgent:
+    """
+    Financial Guardian - Quantitative Analysis & Reality Checking Agent
+    
+    Responsibilities:
+    - Run financial calculations with work shown
+    - Stress-test assumptions
+    - Reveal cash constraints
+    - Provide scenario ranges
+    - Calculate ROI and payback periods
+    """
+    
+    @staticmethod
+    def _load_system_prompt() -> str:
+        """Load Financial Guardian Harvard-level prompt from external file"""
+        from pathlib import Path
+        
+        # Look for prompt file
+        prompt_file = Path(__file__).parent / 'prompts' / 'financial_guardian_prompt.txt'
+        
+        if not prompt_file.exists():
+            # Fallback to basic prompt if file doesn't exist
+            logger.warning(f"Financial Guardian prompt file not found: {prompt_file}")
+            return """You are FINANCIAL GUARDIAN, the quantitative reality checker.
+                Provide financial analysis, unit economics assessment, and cash flow insights.
+                Focus on actionable financial intelligence specific to the user's situation."""
+        
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    
+    # Agent system prompt loaded from external file
+    SYSTEM_PROMPT = _load_system_prompt()
+    
+    def __init__(self, anthropic_api_key: str):
+        """
+        Initialize Financial Guardian Agent
+        
+        Args:
+            anthropic_api_key: Anthropic API key
+        """
+        self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
+        logger.info("Financial Guardian initialized with Claude Sonnet")
+    
+    async def analyze(
+        self,
+        question: str,
+        user_context: str,
+        question_metadata: Dict
+    ) -> Dict:
+        """
+        Analyze financial question and provide quantitative reality check
+        
+        Args:
+            question: User's financial question
+            user_context: User profile and context
+            question_metadata: Question classification metadata
+            
+        Returns:
+            Dict with calculation, scenarios, constraints, etc.
+        """
+        start_time = time.time()
+        
+        try:
+            # Determine question type
+            question_type = self._classify_financial_question(question)
+            
+            # Build prompt
+            prompt = self._build_analysis_prompt(
+                question,
+                user_context,
+                question_metadata,
+                question_type
+            )
+            
+            # Call Claude with lower temperature for accuracy
+            response = await self.claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1500,
+                temperature=0.5,  # Lower for math accuracy
+                system=self.SYSTEM_PROMPT,
+                messages=[{'role': 'user', 'content': prompt}]
+            )
+            
+            response_text = response.content[0].text
+            
+            # Parse response
+            result = self._parse_agent_response(response_text)
+            result['model_used'] = 'claude-sonnet-4'
+            result['agent_name'] = 'financial_guardian'
+            result['question_type'] = question_type
+            result['response_time'] = round(time.time() - start_time, 2)
+            result['success'] = True
+            
+            logger.info(
+                f"Financial Guardian analysis complete - "
+                f"type={question_type}, time={result['response_time']}s"
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Financial Guardian analysis failed: {str(e)}", exc_info=True)
+            
+            # Return fallback response
+            return {
+                'agent_name': 'financial_guardian',
+                'success': False,
+                'error': str(e),
+                'response_time': round(time.time() - start_time, 2),
+                'calculation': 'Unable to complete financial analysis due to technical error.',
+                'confidence': '🔴 Low - Analysis failed',
+                'fallback': True
+            }
+    
+    def _classify_financial_question(self, question: str) -> str:
+        """
+        Classify type of financial question
+        
+        Returns:
+            'calculation' | 'scenario' | 'unit_economics' | 'runway' | 'roi'
+        """
+        question_lower = question.lower()
+        
+        # Calculation keywords
+        if any(word in question_lower for word in [
+            'calculate', 'compute', 'what is', 'how much',
+            'cost', 'price', 'revenue', 'profit'
+        ]):
+            return 'calculation'
+        
+        # Scenario keywords
+        if any(word in question_lower for word in [
+            'what if', 'scenario', 'best case', 'worst case',
+            'if we', 'suppose', 'assuming'
+        ]):
+            return 'scenario'
+        
+        # Unit economics keywords
+        if any(word in question_lower for word in [
+            'cac', 'ltv', 'customer acquisition', 'lifetime value',
+            'payback', 'unit economics', 'margin', 'per customer'
+        ]):
+            return 'unit_economics'
+        
+        # Runway keywords
+        if any(word in question_lower for word in [
+            'runway', 'burn rate', 'how long', 'when will we run out',
+            'cash flow', 'burn'
+        ]):
+            return 'runway'
+        
+        # ROI keywords
+        if any(word in question_lower for word in [
+            'roi', 'return on investment', 'worth it', 'payback period',
+            'break even'
+        ]):
+            return 'roi'
+        
+        # Default to calculation
+        return 'calculation'
+    
+    def _build_analysis_prompt(
+        self,
+        question: str,
+        user_context: str,
+        question_metadata: Dict,
+        question_type: str
+    ) -> str:
+        """Build prompt for financial analysis"""
+        
+        return f"""
+            USER CONTEXT:
+            {user_context}
+
+            QUESTION TYPE: {question_type}
+            COMPLEXITY: {question_metadata.get('complexity', 'medium')}
+            URGENCY: {question_metadata.get('urgency', 'routine')}
+
+            USER QUESTION:
+            {question}
+
+            Provide Financial Guardian analysis following the framework.
+            Show your work for all calculations.
+            Provide scenario ranges (best/realistic/worst).
+            Identify critical constraints.
+            """
+    
+    def _parse_agent_response(self, response_text: str) -> Dict:
+        """
+        Parse agent response using LLM (Ollama) for robust extraction
+        
+        Handles natural language variations better than regex
+        """
+        from .utils.llm_parser import LLMResponseParser
+        
+        try:
+            return LLMResponseParser.parse_financial_guardian_response(response_text)
+        except Exception as e:
+            logger.error(f"LLM parsing failed: {str(e)}")
+            # Ultimate fallback
+            return {
+                'calculation': response_text,
+                'confidence': '🟡 Medium',
+                'scenarios': {
+                    'optimistic': '',
+                    'realistic': '',
+                    'pessimistic': ''
+                },
+                'critical_constraint': '',
+                'assumptions': '',
+                'for_your_situation': '',
+                'question_back': ''
+            }
+
+
+# Example usage
+if __name__ == '__main__':
+    """Test Financial Guardian agent"""
+    from decouple import config
+    
+    async def test_agent():
+        anthropic_key = config('ANTHROPIC_API_KEY')
+        
+        agent = FinancialGuardianAgent(anthropic_api_key=anthropic_key)
+        
+        # Test question
+        test_question = "Is our CAC of $1,500 sustainable with an LTV of $4,200?"
+        test_context = """
+        User: CFO at Series A SaaS startup
+        Company: B2B Marketing Platform
+        Current Metrics: $2M ARR, 50 customers, $150K MRR burn rate
+        Recent questions: Unit economics, fundraising runway
+        """
+        test_metadata = {
+            'question_type': 'validation',
+            'domains': ['finance'],
+            'complexity': 'medium',
+            'urgency': 'important'
+        }
+        
+        print("\n" + "=" * 80)
+        print("TESTING FINANCIAL GUARDIAN AGENT")
+        print("=" * 80)
+        print(f"\nQuestion: {test_question}")
+        print(f"Context: {test_context.strip()}")
+        
+        result = await agent.analyze(
+            question=test_question,
+            user_context=test_context,
+            question_metadata=test_metadata
+        )
+        
+        print("\n" + "=" * 80)
+        print("AGENT RESPONSE")
+        print("=" * 80)
+        print(f"\nSuccess: {result['success']}")
+        print(f"Response Time: {result['response_time']}s")
+        print(f"Model Used: {result.get('model_used', 'N/A')}")
+        print(f"\nCalculation:\n{result['calculation']}")
+        print(f"\nConfidence: {result['confidence']}")
+        
+        if result.get('scenarios'):
+            print(f"\nScenarios:")
+            for scenario_type, scenario_text in result['scenarios'].items():
+                if scenario_text:
+                    print(f"  {scenario_type.title()}: {scenario_text}")
+        
+        if result.get('critical_constraint'):
+            print(f"\nCritical Constraint: {result['critical_constraint']}")
+        
+        print("\n" + "=" * 80)
+    
+    asyncio.run(test_agent())

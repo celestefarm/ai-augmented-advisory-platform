@@ -47,7 +47,7 @@ INSTALLED_APPS = [
     # Local apps
     'authentication',
     'agents',
-    'orchestration',
+    'orchestrator',
     'canvas',
     'memory',
     'reports',
