@@ -327,7 +327,7 @@ class MarketCompassAgent:
         response = await self.claude_client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1500,
-            temperature=0.7,
+            temperature=0.3,
             messages=[{'role': 'user', 'content': interpretation_prompt}]
         )
         

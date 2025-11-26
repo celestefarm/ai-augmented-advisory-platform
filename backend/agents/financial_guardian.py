@@ -107,7 +107,7 @@ class FinancialGuardianAgent:
             response = await self.claude_client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1500,
-                temperature=0.5,  # Lower for math accuracy
+                temperature=0.3,  # Lower for math accuracy
                 system=self.SYSTEM_PROMPT,
                 messages=[{'role': 'user', 'content': prompt}]
             )
@@ -222,7 +222,7 @@ class FinancialGuardianAgent:
         
         Handles natural language variations better than regex
         """
-        from .utils.llm_parser import LLMResponseParser
+        from utils.llm_parser import LLMResponseParser
         
         try:
             return LLMResponseParser.parse_financial_guardian_response(response_text)

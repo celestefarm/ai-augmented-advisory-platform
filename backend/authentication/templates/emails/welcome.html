@@ -2,91 +2,104 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Welcome to AI-Augmented</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-            border-radius: 10px 10px 0 0;
-        }
-        .content {
-            background: #f8f9fa;
-            padding: 30px;
-            border-radius: 0 0 10px 10px;
-        }
-        .feature-box {
-            background: white;
-            padding: 15px;
-            margin: 15px 0;
-            border-left: 4px solid #667eea;
-            border-radius: 5px;
-        }
-        .button {
-            display: inline-block;
-            background: #667eea;
-            color: white;
-            padding: 15px 30px;
-            text-decoration: none;
-            border-radius: 5px;
-            margin: 20px 0;
-            font-weight: 600;
-        }
-    </style>
 </head>
-<body>
-    <div class="header">
-        <h1>🎉 Welcome to AI-Augmented!</h1>
-        <p>Your email has been verified</p>
-    </div>
-    
-    <div class="content">
-        <h2>Hello, {{ user.get_full_name|default:user.email }}!</h2>
-        
-        <p>Your account is now active. You have access to your personal executive advisory team powered by AI.</p>
-        
-        <div class="feature-box">
-            <h3>🧭 Market Compass</h3>
-            <p>Get market intelligence and competitive insights</p>
-        </div>
-        
-        <div class="feature-box">
-            <h3>💰 Financial Guardian</h3>
-            <p>Financial modeling and runway analysis</p>
-        </div>
-        
-        <div class="feature-box">
-            <h3>🎯 Strategy Analyst</h3>
-            <p>Strategic frameworks and blindspot detection</p>
-        </div>
-        
-        <div class="feature-box">
-            <h3>👥 People Advisor</h3>
-            <p>Organizational dynamics and team insights</p>
-        </div>
-        
-        <div class="feature-box">
-            <h3>⚡ Execution Architect</h3>
-            <p>Timeline planning and execution reality</p>
-        </div>
-        
-        <div style="text-align: center;">
-            <a href="{{ dashboard_url }}" class="button">Go to Dashboard</a>
-        </div>
-        
-        <p><strong>Your Subscription:</strong> {{ user.subscription_tier|upper }}</p>
-        <p><strong>Workspace Limit:</strong> {{ user.workspace_limit }} workspaces</p>
-        
-        <p>Need help getting started? Check out our <a href="#">quick start guide</a>.</p>
-    </div>
+<body style="margin: 0; padding: 0; background-color: #000000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #000000;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px;">
+                    
+                    <!-- Logo/Brand -->
+                    <tr>
+                        <td style="padding-bottom: 32px;">
+                            <span style="font-size: 18px; font-weight: 600; color: #ffffff; letter-spacing: -0.5px;">AI-Augmented</span>
+                        </td>
+                    </tr>
+                    
+                    <!-- Main Content -->
+                    <tr>
+                        <td>
+                            <h1 style="margin: 0 0 24px 0; font-size: 24px; font-weight: 400; color: #ffffff; line-height: 1.3;">
+                                Welcome to AI-Augmented
+                            </h1>
+                            
+                            <p style="margin: 0 0 24px 0; font-size: 14px; color: #888888; line-height: 1.6;">
+                                Your account is now active. You're ready to transform conviction into action.
+                            </p>
+                            
+                            <!-- Divider -->
+                            <hr style="border: none; border-top: 1px solid #222222; margin: 32px 0;">
+                            
+                            <!-- Getting Started -->
+                            <p style="margin: 0 0 16px 0; font-size: 13px; color: #666666; text-transform: uppercase; letter-spacing: 0.5px;">
+                                Getting Started
+                            </p>
+                            
+                            <p style="margin: 0 0 12px 0; font-size: 14px; color: #cccccc; line-height: 1.6;">
+                                Create your first workspace
+                            </p>
+                            <p style="margin: 0 0 24px 0; font-size: 13px; color: #666666; line-height: 1.5;">
+                                Organize your strategic questions and decisions in dedicated spaces.
+                            </p>
+                            
+                            <p style="margin: 0 0 12px 0; font-size: 14px; color: #cccccc; line-height: 1.6;">
+                                Ask your first question
+                            </p>
+                            <p style="margin: 0 0 24px 0; font-size: 13px; color: #666666; line-height: 1.5;">
+                                Get strategic insights in minutes, not weeks.
+                            </p>
+                            
+                            <!-- Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" style="margin: 32px 0;">
+                                <tr>
+                                    <td style="background-color: #ffffff; border-radius: 6px;">
+                                        <a href="{{ dashboard_url }}" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 500; color: #000000; text-decoration: none;">
+                                            Open Dashboard
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Divider -->
+                            <hr style="border: none; border-top: 1px solid #222222; margin: 32px 0;">
+                            
+                            <!-- Account Info -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td style="padding-bottom: 12px;">
+                                        <span style="font-size: 13px; color: #666666;">Plan</span>
+                                    </td>
+                                    <td style="padding-bottom: 12px; text-align: right;">
+                                        <span style="font-size: 13px; color: #ffffff;">{{ user.subscription_tier|title }}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <span style="font-size: 13px; color: #666666;">Workspaces</span>
+                                    </td>
+                                    <td style="text-align: right;">
+                                        <span style="font-size: 13px; color: #ffffff;">{{ user.workspace_limit }}</span>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                        </td>
+                    </tr>
+                    
+                    <!-- Copyright -->
+                    <tr>
+                        <td style="padding-top: 48px;">
+                            <p style="margin: 0; font-size: 12px; color: #333333;">
+                                © 2025 AI-Augmented
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>

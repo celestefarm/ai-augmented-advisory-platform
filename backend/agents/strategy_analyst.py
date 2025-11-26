@@ -108,7 +108,7 @@ Focus on actionable strategic intelligence specific to the user's situation."""
             response = await self.claude_client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1500,
-                temperature=0.7,
+                temperature=0.3,
                 system=self.SYSTEM_PROMPT,
                 messages=[{'role': 'user', 'content': prompt}]
             )
@@ -204,22 +204,22 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         """Build prompt for strategic analysis"""
         
         return f"""
-USER CONTEXT:
-{user_context}
+            USER CONTEXT:
+            {user_context}
 
-QUESTION TYPE: {question_type}
-SUGGESTED FRAMEWORK: {suggested_framework}
-COMPLEXITY: {question_metadata.get('complexity', 'medium')}
-URGENCY: {question_metadata.get('urgency', 'routine')}
+            QUESTION TYPE: {question_type}
+            SUGGESTED FRAMEWORK: {suggested_framework}
+            COMPLEXITY: {question_metadata.get('complexity', 'medium')}
+            URGENCY: {question_metadata.get('urgency', 'routine')}
 
-USER QUESTION:
-{question}
+            USER QUESTION:
+            {question}
 
-Provide Strategy Analyst analysis following the framework.
-Reframe the decision to reveal what they're REALLY choosing.
-Apply the most relevant strategic framework.
-Test key assumptions and identify trade-offs.
-"""
+            Provide Strategy Analyst analysis following the framework.
+            Reframe the decision to reveal what they're REALLY choosing.
+            Apply the most relevant strategic framework.
+            Test key assumptions and identify trade-offs.
+            """
     
     def _parse_agent_response(self, response_text: str) -> Dict:
         """

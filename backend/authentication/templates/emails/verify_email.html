@@ -2,84 +2,83 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verify Your Email</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-            border-radius: 10px 10px 0 0;
-        }
-        .content {
-            background: #f8f9fa;
-            padding: 30px;
-            border-radius: 0 0 10px 10px;
-        }
-        .button {
-            display: inline-block;
-            background: #667eea;
-            color: white;
-            padding: 15px 30px;
-            text-decoration: none;
-            border-radius: 5px;
-            margin: 20px 0;
-            font-weight: 600;
-        }
-        .footer {
-            text-align: center;
-            color: #666;
-            font-size: 12px;
-            margin-top: 30px;
-        }
-    </style>
 </head>
-<body>
-    <div class="header">
-        <h1>AI-Augmented Advisory</h1>
-        <p>Your Personal Strategic Thinking Partner</p>
-    </div>
-    
-    <div class="content">
-        <h2>Welcome, {{ user.get_full_name|default:user.email }}!</h2>
-        
-        <p>Thank you for registering with AI-Augmented. You're one step away from accessing your personal executive advisory team.</p>
-        
-        <p>Please verify your email address to activate your account:</p>
-        
-        <div style="text-align: center;">
-            <a href="{{ verification_url }}" class="button">Verify Email Address</a>
-        </div>
-        
-        <p>Or copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; color: #667eea;">{{ verification_url }}</p>
-        
-        <p><strong>This link will expire in 24 hours.</strong></p>
-        
-        <hr style="border: 1px solid #ddd; margin: 30px 0;">
-        
-        <p><strong>What's Next?</strong></p>
-        <ul>
-            <li>Create your first workspace</li>
-            <li>Ask your strategic questions</li>
-            <li>Get insights from 5 specialized AI advisors</li>
-            <li>Visualize decisions on your canvas</li>
-        </ul>
-        
-        <p>If you didn't create this account, you can safely ignore this email.</p>
-    </div>
-    
-    <div class="footer">
-        <p>&copy; 2024 AI-Augmented Advisory Platform. All rights reserved.</p>
-        <p>This is an automated message, please do not reply.</p>
-    </div>
+<body style="margin: 0; padding: 0; background-color: #000000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #000000;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px;">
+                    
+                    <!-- Logo/Brand -->
+                    <tr>
+                        <td style="padding-bottom: 32px;">
+                            <span style="font-size: 18px; font-weight: 600; color: #ffffff; letter-spacing: -0.5px;">AI-Augmented</span>
+                        </td>
+                    </tr>
+                    
+                    <!-- Main Content -->
+                    <tr>
+                        <td>
+                            <h1 style="margin: 0 0 24px 0; font-size: 24px; font-weight: 400; color: #ffffff; line-height: 1.3;">
+                                Verify your email address
+                            </h1>
+                            
+                            <p style="margin: 0 0 24px 0; font-size: 14px; color: #888888; line-height: 1.6;">
+                                To complete your registration, please verify your email address by clicking the button below.
+                            </p>
+                            
+                            <!-- Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" style="margin: 32px 0;">
+                                <tr>
+                                    <td style="background-color: #ffffff; border-radius: 6px;">
+                                        <a href="{{ verification_url }}" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 500; color: #000000; text-decoration: none;">
+                                            Verify Email
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Divider -->
+                            <hr style="border: none; border-top: 1px solid #222222; margin: 32px 0;">
+                            
+                            <!-- Alternative Link -->
+                            <p style="margin: 0 0 16px 0; font-size: 13px; color: #666666; line-height: 1.5;">
+                                Or copy and paste this URL into your browser:
+                            </p>
+                            <p style="margin: 0 0 32px 0; font-size: 13px; color: #888888; word-break: break-all; line-height: 1.5;">
+                                {{ verification_url }}
+                            </p>
+                            
+                            <!-- Expiry Notice -->
+                            <p style="margin: 0 0 32px 0; font-size: 13px; color: #666666; line-height: 1.5;">
+                                This link expires in 24 hours.
+                            </p>
+                            
+                            <!-- Divider -->
+                            <hr style="border: none; border-top: 1px solid #222222; margin: 32px 0;">
+                            
+                            <!-- Footer -->
+                            <p style="margin: 0; font-size: 12px; color: #444444; line-height: 1.5;">
+                                If you didn't create an account, you can safely ignore this email.
+                            </p>
+                            
+                        </td>
+                    </tr>
+                    
+                    <!-- Copyright -->
+                    <tr>
+                        <td style="padding-top: 48px;">
+                            <p style="margin: 0; font-size: 12px; color: #333333;">
+                                © 2025 AI-Augmented
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>
