@@ -96,7 +96,7 @@ class MarketCompassAgent:
                 model_name='gemini-2.0-flash-exp',  # Fast model with search
                 generation_config=genai.types.GenerationConfig(
                     max_output_tokens=1500,
-                    temperature=0.6,
+                    temperature=0.3,
                 )
             )
             logger.info("Market Compass initialized with Gemini web search")

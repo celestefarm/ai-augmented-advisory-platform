@@ -222,7 +222,7 @@ class FinancialGuardianAgent:
         
         Handles natural language variations better than regex
         """
-        from utils.llm_parser import LLMResponseParser
+        from .utils.llm_parser import LLMResponseParser
         
         try:
             return LLMResponseParser.parse_financial_guardian_response(response_text)

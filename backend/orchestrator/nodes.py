@@ -172,29 +172,29 @@ async def execute_agents_parallel_node(state: MultiAgentState) -> MultiAgentStat
     
     try:
         # Import agents
-        from ..market_compass import MarketCompassAgent
-        from ..financial_guardian import FinancialGuardianAgent
-        from ..strategy_analyst import StrategyAnalystAgent
-        from django.conf import settings
+        from agents.market_compass import MarketCompassAgent
+        from agents.financial_guardian import FinancialGuardianAgent
+        from agents.strategy_analyst import StrategyAnalystAgent
+        from decouple import config
         
         # Initialize agents
         agents_map = {}
         
         if 'market_compass' in state['agents_to_activate']:
             agents_map['market_compass'] = MarketCompassAgent(
-                anthropic_api_key=settings.ANTHROPIC_API_KEY,
-                google_api_key=getattr(settings, 'GOOGLE_AI_API_KEY', None),
+                anthropic_api_key=config('ANTHROPIC_API_KEY', default=None),
+                google_api_key=config('GOOGLE_API_KEY', default=None),
                 use_web_search=True
             )
         
         if 'financial_guardian' in state['agents_to_activate']:
             agents_map['financial_guardian'] = FinancialGuardianAgent(
-                anthropic_api_key=settings.ANTHROPIC_API_KEY
+                anthropic_api_key=config('ANTHROPIC_API_KEY', default=None)
             )
         
         if 'strategy_analyst' in state['agents_to_activate']:
             agents_map['strategy_analyst'] = StrategyAnalystAgent(
-                anthropic_api_key=settings.ANTHROPIC_API_KEY
+                anthropic_api_key=config('ANTHROPIC_API_KEY', default=None)
             )
         
         # Build metadata for agents
@@ -294,11 +294,11 @@ async def synthesize_responses_node(state: MultiAgentState) -> MultiAgentState:
     try:
         # Import Chief of Staff
         from agents.services.chief_agent import ChiefOfStaffAgent
-        from django.conf import settings
+        from decouple import config
         
         # Initialize Chief of Staff
         chief_agent = ChiefOfStaffAgent(
-            api_key=settings.ANTHROPIC_API_KEY,
+            api_key=config('ANTHROPIC_API_KEY', default=None),
             model="claude-sonnet-4-20250514"
         )
         

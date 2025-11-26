@@ -60,7 +60,7 @@ class ChiefOfStaffAgent:
         api_key: str,
         model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 2000,
-        temperature: float = 0.7,
+        temperature: float = 0.5,
         google_api_key: Optional[str] = None
     ):
         """
@@ -707,6 +707,315 @@ class ChiefOfStaffAgent:
             logger.error(f"Error in simple generation: {str(e)}", exc_info=True)
             raise
     
+    # Orchestration Methods
+    async def synthesize_specialist_outputs(
+        self,
+        question: str,
+        specialist_outputs: Dict[str, Dict],
+        user_context: str,
+        emotional_state: str = 'neutral'
+    ) -> Tuple[str, Dict]:
+        """
+        Synthesize outputs from specialist agents
+        
+        The Chief of Staff's Week 3 role - combining specialist perspectives
+        (Market Compass, Financial Guardian, Strategy Analyst) into executive-ready insights.
+        
+        Args:
+            question: Original user question
+            specialist_outputs: Dict with keys 'market_compass', 'financial_guardian', 'strategy_analyst'
+            user_context: User profile
+            emotional_state: User's emotional state
+            
+        Returns:
+            Tuple of (synthesis_text, metadata)
+            
+        Example:
+            synthesis, metadata = await chief_agent.synthesize_specialist_outputs(
+                question="Should we expand to enterprise?",
+                specialist_outputs={
+                    'market_compass': {...},
+                    'financial_guardian': {...},
+                    'strategy_analyst': {...}
+                },
+                user_context="Series A CEO",
+                emotional_state='anxiety'
+            )
+        """
+        # Build synthesis prompt
+        synthesis_prompt = self._build_synthesis_prompt(
+            question=question,
+            specialist_outputs=specialist_outputs
+        )
+        
+        # Use generate_response_simple for synthesis
+        synthesis, metadata = await self.generate_response_simple(
+            user_question=synthesis_prompt,
+            user_context=user_context,
+            emotional_state=emotional_state,
+            tone_adjustment={
+                'approach': 'synthesis',
+                'style': 'executive_summary'
+            },
+            question_metadata={
+                'question_type': 'synthesis',
+                'complexity': 'high',
+                'domains': ['synthesis']
+            }
+        )
+        
+        return synthesis, metadata
+
+
+    def _build_synthesis_prompt(
+        self,
+        question: str,
+        specialist_outputs: Dict[str, Dict]
+    ) -> str:
+        """
+        Build prompt for synthesis task
+        
+        Args:
+            question: User's original question
+            specialist_outputs: Outputs from specialist agents
+            
+        Returns:
+            Synthesis prompt string
+        """
+        prompt_parts = [
+            "You are the Chief of Staff synthesizing inputs from specialist advisors.",
+            "",
+            f"EXECUTIVE'S QUESTION:",
+            f"{question}",
+            "",
+            "=" * 80,
+            "SPECIALIST ADVISOR INPUTS",
+            "=" * 80,
+            ""
+        ]
+        
+        # Add Market Compass input if present
+        if 'market_compass' in specialist_outputs:
+            market = specialist_outputs['market_compass']
+            prompt_parts.extend([
+                "📊 MARKET COMPASS (Market Intelligence):",
+                f"Analysis: {market.get('analysis', 'N/A')}",
+                f"Confidence: {market.get('confidence', 'N/A')}",
+                f"For Your Situation: {market.get('for_your_situation', 'N/A')}",
+                ""
+            ])
+            
+            if market.get('blindspot'):
+                prompt_parts.append(f"Blindspot Alert: {market['blindspot']}")
+                prompt_parts.append("")
+            
+            if market.get('timing'):
+                prompt_parts.append(f"Timing: {market['timing']}")
+                prompt_parts.append("")
+            
+            if market.get('signal'):
+                prompt_parts.append(f"Signal: {market['signal']}")
+                prompt_parts.append("")
+        
+        # Add Financial Guardian input if present
+        if 'financial_guardian' in specialist_outputs:
+            financial = specialist_outputs['financial_guardian']
+            prompt_parts.extend([
+                "💰 FINANCIAL GUARDIAN (Financial Reality Check):",
+                f"Calculation: {financial.get('calculation', 'N/A')}",
+                f"Confidence: {financial.get('confidence', 'N/A')}",
+                ""
+            ])
+            
+            if financial.get('scenarios'):
+                scenarios = financial['scenarios']
+                prompt_parts.extend([
+                    "Scenarios:",
+                    f"  - Optimistic: {scenarios.get('optimistic', 'N/A')}",
+                    f"  - Realistic: {scenarios.get('realistic', 'N/A')}",
+                    f"  - Pessimistic: {scenarios.get('pessimistic', 'N/A')}",
+                    ""
+                ])
+            
+            if financial.get('critical_constraint'):
+                prompt_parts.append(f"Critical Constraint: {financial['critical_constraint']}")
+                prompt_parts.append("")
+            
+            if financial.get('for_your_situation'):
+                prompt_parts.append(f"For Your Situation: {financial['for_your_situation']}")
+                prompt_parts.append("")
+        
+        # Add Strategy Analyst input if present
+        if 'strategy_analyst' in specialist_outputs:
+            strategy = specialist_outputs['strategy_analyst']
+            prompt_parts.extend([
+                "🎯 STRATEGY ANALYST (Strategic Framework):",
+                f"Decision Reframe: {strategy.get('decision_reframe', 'N/A')}",
+                f"Confidence: {strategy.get('confidence', 'N/A')}",
+                ""
+            ])
+            
+            if strategy.get('framework_applied'):
+                prompt_parts.append(f"Framework Applied: {strategy['framework_applied']}")
+                prompt_parts.append("")
+            
+            if strategy.get('trade_offs'):
+                prompt_parts.append(f"Trade-offs: {strategy['trade_offs']}")
+                prompt_parts.append("")
+            
+            if strategy.get('strategic_blindspot'):
+                prompt_parts.append(f"Strategic Blindspot: {strategy['strategic_blindspot']}")
+                prompt_parts.append("")
+            
+            if strategy.get('for_your_situation'):
+                prompt_parts.append(f"For Your Situation: {strategy['for_your_situation']}")
+                prompt_parts.append("")
+        
+        prompt_parts.extend([
+            "=" * 80,
+            "YOUR JOB AS CHIEF OF STAFF",
+            "=" * 80,
+            "",
+            "Synthesize these specialist inputs into ONE coherent executive briefing.",
+            "",
+            "**Synthesis Framework:**",
+            "1. CONVERGENCE: What do advisors AGREE on?",
+            "2. DIVERGENCE: Where do they DIFFER?",
+            "3. INTEGRATION: What's the CORE insight when you combine all views?",
+            "4. REFRAME: What's the REAL decision being made?",
+            "5. EMPOWERMENT: What should the executive DO with this?",
+            "",
+            "**Critical Rules:**",
+            "- Don't just concatenate - truly synthesize",
+            "- If advisors conflict, explain WHY and present the trade-off",
+            "- If all flag same concern, emphasize it strongly",
+            "- Use the LOWEST advisor confidence as your ceiling",
+            "- Keep response 300-500 words (executive-appropriate)",
+            "- Include counter-argument: 'Here's where I might be wrong...'",
+            "- Mark confidence: 🟢/🟡/🟠/🔴",
+            "- End with empowering question: 'What's your read?'",
+            "",
+            "**Your Signature Style:**",
+            "- Validate → Synthesize → Reframe → Empower",
+            "- 'Your advisors see...'",
+            "- 'The convergence point is...'",
+            "- 'The real question you're facing...'",
+            "- 'What's your read on this?'",
+            "",
+            "**Example Opening:**",
+            '"Your advisors are surfacing a classic [type] dilemma. Market sees [X].',
+            'Finance sees [Y]. Strategy sees [Z]. The convergence point: [insight].',
+            'The real question isn\'t [what they asked] - it\'s [reframe]."',
+            "",
+            "**Temperature Note:**",
+            "You're running at temperature 0.5 for natural, nuanced synthesis.",
+            "Use this flexibility to create executive-quality narrative.",
+            "",
+            "Now synthesize for the executive:"
+        ])
+        
+        return "\n".join(prompt_parts)
+
+
+    # ========================================================================
+    # INSTALLATION INSTRUCTIONS
+    # ========================================================================
+    """
+    TO ADD THESE METHODS TO YOUR CHIEF OF STAFF AGENT:
+
+    1. Open: agents/services/chief_agent.py
+
+    2. Find the ChiefOfStaffAgent class
+
+    3. Scroll to the end of the class (after generate_response_simple method)
+
+    4. Add both methods above:
+    - synthesize_specialist_outputs()
+    - _build_synthesis_prompt()
+
+    5. Location in file (approximate line number):
+    
+    class ChiefOfStaffAgent:
+        def __init__(self, ...):
+            ...
+        
+        async def generate_response(self, ...):
+            ...
+        
+        async def generate_response_simple(self, ...):
+            ...
+        
+        # ADD HERE (after generate_response_simple):
+        async def synthesize_specialist_outputs(self, ...):
+            ...  # First method
+        
+        def _build_synthesis_prompt(self, ...):
+            ...  # Second method
+        
+        # Existing methods continue...
+        def _build_messages(self, ...):
+            ...
+
+    6. Make sure both methods are indented at the SAME level as other class methods
+
+    7. Save the file
+
+    8. Test with:
+    python -m agents.services.chief_agent
+
+    That's it! Your Chief of Staff now has synthesis capability.
+    """
+
+    # ========================================================================
+    # QUICK TEST
+    # ========================================================================
+    """
+    To test the synthesis method:
+
+    import asyncio
+    from agents.services.chief_agent import ChiefOfStaffAgent
+    from decouple import config
+
+    async def test_synthesis():
+        chief = ChiefOfStaffAgent(
+            api_key=config('ANTHROPIC_API_KEY'),
+            model='claude-sonnet-4-20250514',
+            temperature=0.5  # ← Note: 0.5 for synthesis
+        )
+        
+        # Mock specialist outputs
+        specialist_outputs = {
+            'market_compass': {
+                'analysis': 'Market opportunity is real, 18-24 month window',
+                'confidence': '🟢 High',
+                'for_your_situation': 'Your SMB traction validates upmarket move'
+            },
+            'financial_guardian': {
+                'calculation': 'Enterprise CAC is 8x higher: $12K vs $1.5K',
+                'confidence': '🟡 Medium',
+                'critical_constraint': 'Current burn rate gives 6 months runway'
+            },
+            'strategy_analyst': {
+                'decision_reframe': 'Real question: Can you serve 2 segments with one team?',
+                'confidence': '🟢 High',
+                'framework_applied': 'Playing to Win'
+            }
+        }
+        
+        synthesis, metadata = await chief.synthesize_specialist_outputs(
+            question='Should we expand to enterprise market?',
+            specialist_outputs=specialist_outputs,
+            user_context='Series A SaaS CEO, 100 SMB customers',
+            emotional_state='anxiety'
+        )
+        
+        print(f"Synthesis ({metadata['response_time']:.2f}s):")
+        print(synthesis)
+
+    asyncio.run(test_synthesis())
+    """
+
+
     def _build_messages(
         self,
         user_question: str,

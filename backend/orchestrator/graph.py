@@ -136,7 +136,7 @@ async def run_multi_agent_pipeline(question: str, user_context: str, workspace_i
     Returns:
         Final state with response and metadata
     """
-    from agents.state import initialize_state
+    from .state import initialize_state
     
     # Initialize state
     initial_state = initialize_state(
