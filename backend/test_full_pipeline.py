@@ -9,8 +9,8 @@ from orchestrator import run_multi_agent_pipeline
 
 async def test():
     result = await run_multi_agent_pipeline(
-        question="What is 2 + 2?",
-        user_context="Series A SaaS CEO, 100 SMB customers, $30M ARR",
+        question="37% of execs without AI strategy report 'very successful' vs 80% with strategy. We lack formal AI strategy. Do I pump brakes or keep shipping?",
+        user_context="Series A SaaS CEO, 100 SMB customers, $40M ARR",
         workspace_id="test_ws",
         user_id="test_user"
     )

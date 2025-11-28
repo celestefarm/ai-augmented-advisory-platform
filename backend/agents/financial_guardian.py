@@ -16,6 +16,11 @@ Model Strategy:
 - Automatic client detection based on model name
 - Lower temperature (0.3) for mathematical accuracy
 
+Caching Strategy:
+- System prompts: 1 hour (Redis)
+- Model outputs: 30 minutes (Redis)
+- Agent responses: 15 minutes (Redis)
+
 Output: Financial analysis with calculations, scenarios, constraints, and confidence marking
 """
 
@@ -24,10 +29,12 @@ import asyncio
 from typing import Dict, Optional
 import logging
 import aiohttp
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 from anthropic import AsyncAnthropic
+from agents.utils.cache import get_cache_manager
 
 # Try to import Gemini
 try:
@@ -53,8 +60,25 @@ class FinancialGuardianAgent:
     - Claude (claude-*): Anthropic API
     - Gemini (gemini-*): Google AI API
     - Ollama (llama*, mistral*, etc.): Local Ollama server
-    """
     
+    Caching Strategy:
+    - Redis cache for all model outputs
+    - Condensed prompts for Ollama (faster first requests)
+    - Full prompts for Claude/Gemini (better quality)
+    """
+
+    # Condensed prompt for Ollama (faster)
+    CONDENSED_SYSTEM_PROMPT = """You are a Financial Guardian - quantitative reality checker.
+
+Provide financial analysis with:
+1. **Calculation**: Show your work step-by-step with numbers
+2. **Scenarios**: Best case / Realistic / Worst case
+3. **Critical Constraint**: Main financial bottleneck or risk
+4. **Assumptions**: What must be true for this to work
+5. **Confidence**: Mark as 🟢 High, 🟡 Medium, or 🔴 Low
+
+Focus on concrete numbers, math, and financial constraints."""
+
     @staticmethod
     def _load_system_prompt() -> str:
         """Load Financial Guardian Harvard-level prompt from external file"""
@@ -67,8 +91,8 @@ class FinancialGuardianAgent:
             # Fallback to basic prompt if file doesn't exist
             logger.warning(f"Financial Guardian prompt file not found: {prompt_file}")
             return """You are FINANCIAL GUARDIAN, the quantitative reality checker.
-                Provide financial analysis, unit economics assessment, and cash flow insights.
-                Focus on actionable financial intelligence specific to the user's situation."""
+Provide financial analysis, unit economics assessment, and cash flow insights.
+Focus on actionable financial intelligence specific to the user's situation."""
         
         with open(prompt_file, 'r', encoding='utf-8') as f:
             return f.read()
@@ -83,14 +107,19 @@ class FinancialGuardianAgent:
         google_api_key: Optional[str] = None
     ):
         """
-        Initialize Financial Guardian Agent with multi-model support
+        Initialize Financial Guardian Agent with multi-model support and caching
         
         Args:
             anthropic_api_key: Anthropic API key
             model: Model to use (auto-detects client type)
             google_api_key: Google API key (for Gemini models)
         """
+        self.cache = get_cache_manager()  # ✅ UNIFIED CACHE
         self.model = model
+
+        # Hash system prompts for caching
+        self.full_prompt_hash = hashlib.md5(self.SYSTEM_PROMPT.encode()).hexdigest()
+        self.condensed_prompt_hash = hashlib.md5(self.CONDENSED_SYSTEM_PROMPT.encode()).hexdigest()
         
         # ✅ AUTO-DETECT CLIENT TYPE
         if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
@@ -125,7 +154,7 @@ class FinancialGuardianAgent:
         question_metadata: Dict
     ) -> Dict:
         """
-        Analyze financial question and provide quantitative reality check
+        Analyze financial question and provide quantitative reality check with caching
         
         Args:
             question: User's financial question
@@ -138,6 +167,22 @@ class FinancialGuardianAgent:
         start_time = time.time()
         
         try:
+            # Check cache for complete agent response
+            question_hash = hashlib.md5(
+                f"{question}:{user_context}".encode()
+            ).hexdigest()
+            
+            cached_response = self.cache.get_agent_response(
+                question_hash,
+                'financial_guardian'
+            )
+            
+            if cached_response:
+                logger.info("✅ Using cached Financial Guardian response")
+                cached_response['response_time'] = round(time.time() - start_time, 2)
+                cached_response['from_cache'] = True
+                return cached_response
+            
             # Determine question type
             question_type = self._classify_financial_question(question)
             
@@ -165,6 +210,14 @@ class FinancialGuardianAgent:
             result['question_type'] = question_type
             result['response_time'] = round(time.time() - start_time, 2)
             result['success'] = True
+            result['from_cache'] = False
+            
+            # Cache the agent response
+            self.cache.set_agent_response(
+                question_hash,
+                'financial_guardian',
+                result
+            )
             
             logger.info(
                 f"Financial Guardian analysis complete - "
@@ -185,33 +238,108 @@ class FinancialGuardianAgent:
                 'response_time': round(time.time() - start_time, 2),
                 'calculation': 'Unable to complete financial analysis due to technical error.',
                 'confidence': '🔴 Low - Analysis failed',
-                'fallback': True
+                'fallback': True,
+                'from_cache': False
             }
     
     async def _call_claude(self, prompt: str) -> str:
-        """Call Claude API"""
+        """Call Claude API with Redis + Anthropic dual caching"""
+        
+        # Generate cache key
+        input_hash = hashlib.md5(prompt.encode()).hexdigest()
+        
+        # Try Redis cache first (30 min TTL)
+        cached_output = self.cache.get_model_output(
+            f"claude_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Claude response")
+            return cached_output
+        
+        # Call Claude API with Anthropic's prompt caching
+        logger.info("🌐 Calling Claude API with prompt caching")
         response = await self.claude_client.messages.create(
             model=self.model,
             max_tokens=1500,
             temperature=0.3,  # Lower for math accuracy
-            system=self.SYSTEM_PROMPT,
+            system=[
+                {
+                    "type": "text",
+                    "text": self.SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"}  # Anthropic cache (5 min)
+                }
+            ],
             messages=[{'role': 'user', 'content': prompt}]
         )
-        return response.content[0].text
+        
+        output = response.content[0].text
+        
+        # Cache in Redis (30 min)
+        self.cache.set_model_output(
+            f"claude_{self.model}",
+            input_hash,
+            output
+        )
+        logger.info("💾 Cached Claude response in Redis")
+        
+        return output
     
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API"""
+        """Call Gemini API with Redis caching"""
+        
+        # Generate cache key
         full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        input_hash = hashlib.md5(full_prompt.encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"gemini_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Gemini response")
+            return cached_output
+        
+        # Call Gemini API
+        logger.info("🌐 Calling Gemini API")
         response = await asyncio.to_thread(
             self.gemini_client.generate_content,
             full_prompt
         )
-        return response.text
+        
+        output = response.text
+        
+        # Cache in Redis
+        self.cache.set_model_output(
+            f"gemini_{self.model}",
+            input_hash,
+            output
+        )
+        logger.info("💾 Cached Gemini response in Redis")
+        
+        return output
     
     async def _call_ollama(self, prompt: str) -> str:
-        """Call Ollama local server"""
-        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        """Call Ollama with condensed prompt and Redis caching"""
         
+        # Use condensed prompt for speed
+        full_prompt = f"{self.CONDENSED_SYSTEM_PROMPT}\n\n{prompt}"
+        
+        # Generate cache key
+        input_hash = hashlib.md5(full_prompt.encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"ollama_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Ollama response")
+            return cached_output
+        
+        # Call Ollama API
+        logger.info("🌐 Calling Ollama API with condensed prompt")
         async with aiohttp.ClientSession() as session:
             payload = {
                 "model": self.model,
@@ -230,7 +358,17 @@ class FinancialGuardianAgent:
             ) as response:
                 if response.status == 200:
                     result = await response.json()
-                    return result.get('response', '')
+                    output = result.get('response', '')
+                    
+                    # Cache in Redis
+                    self.cache.set_model_output(
+                        f"ollama_{self.model}",
+                        input_hash,
+                        output
+                    )
+                    logger.info("💾 Cached Ollama response in Redis")
+                    
+                    return output
                 else:
                     error_text = await response.text()
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
@@ -307,10 +445,10 @@ class FinancialGuardianAgent:
             Provide scenario ranges (best/realistic/worst).
             Identify critical constraints.
             """
-                
+                            
     async def _parse_agent_response(self, response_text: str) -> Dict:
         """
-        Parse agent response using LLM (Ollama) for robust extraction
+        Parse agent response using LLM parser for robust extraction
         
         Handles natural language variations better than regex
         """
@@ -339,7 +477,7 @@ class FinancialGuardianAgent:
 
 # Example usage
 if __name__ == '__main__':
-    """Test Financial Guardian agent"""
+    """Test Financial Guardian agent with caching"""
     from decouple import config
     
     async def test_agent():
@@ -368,35 +506,48 @@ if __name__ == '__main__':
         }
         
         print("\n" + "=" * 80)
-        print("TESTING FINANCIAL GUARDIAN AGENT")
+        print("TESTING FINANCIAL GUARDIAN AGENT WITH CACHE")
         print("=" * 80)
-        print(f"\nQuestion: {test_question}")
-        print(f"Context: {test_context.strip()}")
         
-        result = await agent.analyze(
+        # First call - should hit API
+        print("\n[TEST 1] First call (API)...")
+        result1 = await agent.analyze(
             question=test_question,
             user_context=test_context,
             question_metadata=test_metadata
         )
+        print(f"✅ Response Time: {result1['response_time']}s")
+        print(f"✅ From Cache: {result1.get('from_cache', False)}")
+        print(f"✅ Model Used: {result1.get('model_used', 'N/A')}")
+        print(f"✅ Client Type: {result1.get('client_type', 'N/A')}")
         
-        print("\n" + "=" * 80)
-        print("AGENT RESPONSE")
-        print("=" * 80)
-        print(f"\nSuccess: {result['success']}")
-        print(f"Response Time: {result['response_time']}s")
-        print(f"Model Used: {result.get('model_used', 'N/A')}")
-        print(f"Client Type: {result.get('client_type', 'N/A')}")
-        print(f"\nCalculation:\n{result['calculation']}")
-        print(f"\nConfidence: {result['confidence']}")
+        # Second call - should hit cache
+        print("\n[TEST 2] Second call (Cache)...")
+        result2 = await agent.analyze(
+            question=test_question,
+            user_context=test_context,
+            question_metadata=test_metadata
+        )
+        print(f"✅ Response Time: {result2['response_time']}s")
+        print(f"✅ From Cache: {result2.get('from_cache', False)}")
         
-        if result.get('scenarios'):
-            print(f"\nScenarios:")
-            for scenario_type, scenario_text in result['scenarios'].items():
+        # Show calculation
+        print(f"\n💰 Calculation:\n{result2['calculation'][:300]}...")
+        print(f"\n🎯 Confidence: {result2['confidence']}")
+        
+        if result2.get('scenarios'):
+            print(f"\n📊 Scenarios:")
+            for scenario_type, scenario_text in result2['scenarios'].items():
                 if scenario_text:
-                    print(f"  {scenario_type.title()}: {scenario_text}")
+                    print(f"  {scenario_type.title()}: {scenario_text[:100]}...")
         
-        if result.get('critical_constraint'):
-            print(f"\nCritical Constraint: {result['critical_constraint']}")
+        if result2.get('critical_constraint'):
+            print(f"\n⚠️  Critical Constraint: {result2['critical_constraint'][:150]}...")
+        
+        # Cache stats
+        cache = get_cache_manager()
+        stats = cache.get_stats()
+        print(f"\n📊 Cache Stats: {stats}")
         
         print("\n" + "=" * 80)
     

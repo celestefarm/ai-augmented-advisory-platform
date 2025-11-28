@@ -142,6 +142,27 @@ DATABASES = {
 # Use Firestore as database if specified
 USE_FIRESTORE = config('USE_FIRESTORE', default='False', cast=bool)
 
+
+
+# Redis Configuration for AI Agent Caching
+REDIS_CONFIG = {
+    'HOST': config('REDIS_HOST', default='localhost'),
+    'PORT': config('REDIS_PORT', default=6379, cast=int),
+    'DB': config('REDIS_DB', default=0, cast=int),
+    'PASSWORD': config('REDIS_PASSWORD', default=None),
+    'MAX_CONNECTIONS': config('REDIS_MAX_CONNECTIONS', default=50, cast=int),
+}
+
+# Cache TTL Settings for AI Agents
+CACHE_TTL = {
+    'SYSTEM_PROMPT': 3600,      # 1 hour
+    'USER_CONTEXT': 300,        # 5 minutes
+    'AGENT_RESPONSE': 900,      # 15 minutes
+    'MODEL_OUTPUT': 1800,       # 30 minutes
+}
+
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
 
@@ -317,6 +338,14 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'verbose',
         },
+        'cache_file': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'cache.log',
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
     },
     'loggers': {
         'django': {
@@ -356,6 +385,11 @@ LOGGING = {
         },
         'authentication': {
             'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'agents.utils.cache': {
+            'handlers': ['console', 'cache_file'],
             'level': 'INFO',
             'propagate': False,
         },

@@ -15,6 +15,11 @@ Model Strategy:
 - Automatic client detection based on model name
 - Gemini preferred for web search capability
 
+Caching Strategy:
+- System prompts: 1 hour (Redis)
+- Model outputs: 30 minutes (Redis)
+- Agent responses: 15 minutes (Redis)
+
 Output: Market intelligence with confidence marking, sources, and blindspot detection
 """
 
@@ -23,8 +28,11 @@ import asyncio
 from typing import Dict, Optional, Tuple
 import logging
 import aiohttp
+import hashlib
 
 logger = logging.getLogger(__name__)
+
+from agents.utils.cache import get_cache_manager
 
 # Try to import Gemini
 try:
@@ -53,7 +61,25 @@ class MarketCompassAgent:
     - Claude (claude-*): Anthropic API
     - Gemini (gemini-*): Google AI API with web search
     - Ollama (llama*, mistral*, etc.): Local Ollama server
+    
+    Caching Strategy:
+    - Redis cache for all model outputs
+    - Condensed prompts for Ollama (faster first requests)
+    - Full prompts for Claude/Gemini (better quality)
     """
+    
+    # Condensed prompt for Ollama (faster)
+    CONDENSED_SYSTEM_PROMPT = """You are a Market Compass - market intelligence expert.
+
+        Provide market analysis with:
+        1. **Analysis**: Market signals, competitive threats, opportunities
+        2. **Signal**: Key market signal or trend identified
+        3. **For Your Situation**: Specific implications for this user
+        4. **Blindspot**: What they might be missing
+        5. **Timing**: When to act (now/soon/monitor)
+        6. **Confidence**: Mark as 🟢 High, 🟡 Medium, or 🔴 Low
+
+        Focus on actionable market intelligence."""
     
     @staticmethod
     def _load_system_prompt() -> str:
@@ -84,7 +110,7 @@ Focus on actionable intelligence specific to the user's situation."""
         use_web_search: bool = True
     ):
         """
-        Initialize Market Compass Agent with multi-model support
+        Initialize Market Compass Agent with multi-model support and caching
         
         Args:
             anthropic_api_key: Anthropic API key
@@ -92,8 +118,13 @@ Focus on actionable intelligence specific to the user's situation."""
             model: Model to use (auto-detects client type)
             use_web_search: Whether to use real-time web search
         """
+        self.cache = get_cache_manager()  # ✅ UNIFIED CACHE
         self.model = model
         self.use_web_search = use_web_search
+
+        # Hash system prompts for caching
+        self.full_prompt_hash = hashlib.md5(self.SYSTEM_PROMPT.encode()).hexdigest()
+        self.condensed_prompt_hash = hashlib.md5(self.CONDENSED_SYSTEM_PROMPT.encode()).hexdigest()
         
         # ✅ AUTO-DETECT CLIENT TYPE
         if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
@@ -128,7 +159,7 @@ Focus on actionable intelligence specific to the user's situation."""
         question_metadata: Dict
     ) -> Dict:
         """
-        Analyze market question and provide intelligence
+        Analyze market question and provide intelligence with caching
         
         Args:
             question: User's market question
@@ -141,6 +172,22 @@ Focus on actionable intelligence specific to the user's situation."""
         start_time = time.time()
         
         try:
+            # Check cache for complete agent response
+            question_hash = hashlib.md5(
+                f"{question}:{user_context}".encode()
+            ).hexdigest()
+            
+            cached_response = self.cache.get_agent_response(
+                question_hash,
+                'market_compass'
+            )
+            
+            if cached_response:
+                logger.info("✅ Using cached Market Compass response")
+                cached_response['response_time'] = round(time.time() - start_time, 2)
+                cached_response['from_cache'] = True
+                return cached_response
+            
             # Determine question type
             question_type = self._classify_market_question(question)
             
@@ -177,6 +224,14 @@ Focus on actionable intelligence specific to the user's situation."""
             result['question_type'] = question_type
             result['response_time'] = round(time.time() - start_time, 2)
             result['success'] = True
+            result['from_cache'] = False
+            
+            # Cache the agent response
+            self.cache.set_agent_response(
+                question_hash,
+                'market_compass',
+                result
+            )
             
             logger.info(
                 f"Market Compass analysis complete - "
@@ -197,43 +252,144 @@ Focus on actionable intelligence specific to the user's situation."""
                 'response_time': round(time.time() - start_time, 2),
                 'analysis': 'Unable to complete market analysis due to technical error.',
                 'confidence': '🔴 Low - Analysis failed',
-                'fallback': True
+                'fallback': True,
+                'from_cache': False
             }
     
     async def _call_claude(self, prompt: str) -> str:
-        """Call Claude API"""
+        """Call Claude API with Redis + Anthropic dual caching"""
+        
+        # Generate cache key
+        input_hash = hashlib.md5(prompt.encode()).hexdigest()
+        
+        # Try Redis cache first (30 min TTL)
+        cached_output = self.cache.get_model_output(
+            f"claude_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Claude response")
+            return cached_output
+        
+        # Call Claude API with Anthropic's prompt caching
+        logger.info("🌐 Calling Claude API with prompt caching")
         response = await self.claude_client.messages.create(
             model=self.model,
             max_tokens=1500,
             temperature=0.7,
-            system=self.SYSTEM_PROMPT,
+            system=[
+                {
+                    "type": "text",
+                    "text": self.SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"}  # Anthropic cache (5 min)
+                }
+            ],
             messages=[{'role': 'user', 'content': prompt}]
         )
-        return response.content[0].text
+        
+        output = response.content[0].text
+        
+        # Cache in Redis (30 min)
+        self.cache.set_model_output(
+            f"claude_{self.model}",
+            input_hash,
+            output
+        )
+        logger.info("Cached Claude response in Redis")
+        
+        return output
     
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API (without web search)"""
+        """Call Gemini API with Redis caching (without web search)"""
+        
+        # Generate cache key
         full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        input_hash = hashlib.md5(full_prompt.encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"gemini_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Gemini response")
+            return cached_output
+        
+        # Call Gemini API
+        logger.info("🌐 Calling Gemini API")
         response = await asyncio.to_thread(
             self.gemini_model.generate_content,
             full_prompt
         )
-        return response.text
+        
+        output = response.text
+        
+        # Cache in Redis
+        self.cache.set_model_output(
+            f"gemini_{self.model}",
+            input_hash,
+            output
+        )
+        logger.info("💾 Cached Gemini response in Redis")
+        
+        return output
     
     async def _call_gemini_with_search(self, prompt: str) -> str:
-        """Call Gemini API with Google Search grounding"""
+        """Call Gemini API with Google Search grounding and Redis caching"""
+        
+        # Generate cache key (include 'search' in key to differentiate)
         full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        input_hash = hashlib.md5(f"search:{full_prompt}".encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"gemini_{self.model}_search",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Gemini+Search response")
+            return cached_output
+        
+        # Call Gemini API with search
+        logger.info("🌐 Calling Gemini API with Google Search")
         response = await asyncio.to_thread(
             self.gemini_model.generate_content,
             full_prompt,
             tools=[genai.protos.Tool(google_search_retrieval={})]
         )
-        return response.text
+        
+        output = response.text
+        
+        # Cache in Redis
+        self.cache.set_model_output(
+            f"gemini_{self.model}_search",
+            input_hash,
+            output
+        )
+        logger.info("💾 Cached Gemini+Search response in Redis")
+        
+        return output
     
     async def _call_ollama(self, prompt: str) -> str:
-        """Call Ollama local server"""
-        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        """Call Ollama with condensed prompt and Redis caching"""
         
+        # Use condensed prompt for speed
+        full_prompt = f"{self.CONDENSED_SYSTEM_PROMPT}\n\n{prompt}"
+        
+        # Generate cache key
+        input_hash = hashlib.md5(full_prompt.encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"ollama_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Ollama response")
+            return cached_output
+        
+        # Call Ollama API
+        logger.info("🌐 Calling Ollama API with condensed prompt")
         async with aiohttp.ClientSession() as session:
             payload = {
                 "model": self.model,
@@ -252,7 +408,17 @@ Focus on actionable intelligence specific to the user's situation."""
             ) as response:
                 if response.status == 200:
                     result = await response.json()
-                    return result.get('response', '')
+                    output = result.get('response', '')
+                    
+                    # Cache in Redis
+                    self.cache.set_model_output(
+                        f"ollama_{self.model}",
+                        input_hash,
+                        output
+                    )
+                    logger.info("Cached Ollama response in Redis")
+                    
+                    return output
                 else:
                     error_text = await response.text()
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
@@ -317,7 +483,7 @@ Include confidence marking and sources where applicable.
                 
     async def _parse_agent_response(self, response_text: str) -> Dict:
         """
-        Parse agent response using LLM (Ollama) for robust extraction
+        Parse agent response using LLM parser for robust extraction
         
         Handles natural language variations better than regex
         """
@@ -343,7 +509,7 @@ Include confidence marking and sources where applicable.
 
 # Example usage
 if __name__ == '__main__':
-    """Test Market Compass agent"""
+    """Test Market Compass agent with caching"""
     from decouple import config
     
     async def test_agent():
@@ -373,30 +539,35 @@ Recent questions: Market positioning, competitive analysis
         }
         
         print("\n" + "=" * 80)
-        print("TESTING MARKET COMPASS AGENT")
+        print("TESTING MARKET COMPASS AGENT WITH CACHE")
         print("=" * 80)
-        print(f"\nQuestion: {test_question}")
-        print(f"Context: {test_context.strip()}")
         
-        result = await agent.analyze(
+        # First call - should hit API
+        print("\n[TEST 1] First call (API)...")
+        result1 = await agent.analyze(
             question=test_question,
             user_context=test_context,
             question_metadata=test_metadata
         )
+        print(f"✅ Response Time: {result1['response_time']}s")
+        print(f"✅ From Cache: {result1.get('from_cache', False)}")
+        print(f"✅ Model Used: {result1.get('model_used', 'N/A')}")
+        print(f"✅ Web Search: {result1.get('web_search_used', False)}")
         
-        print("\n" + "=" * 80)
-        print("AGENT RESPONSE")
-        print("=" * 80)
-        print(f"\nSuccess: {result['success']}")
-        print(f"Response Time: {result['response_time']}s")
-        print(f"Model Used: {result.get('model_used', 'N/A')}")
-        print(f"Client Type: {result.get('client_type', 'N/A')}")
-        print(f"Web Search: {result.get('web_search_used', False)}")
-        print(f"\nAnalysis:\n{result['analysis']}")
-        print(f"\nConfidence: {result['confidence']}")
+        # Second call - should hit cache
+        print("\n[TEST 2] Second call (Cache)...")
+        result2 = await agent.analyze(
+            question=test_question,
+            user_context=test_context,
+            question_metadata=test_metadata
+        )
+        print(f"✅ Response Time: {result2['response_time']}s")
+        print(f"✅ From Cache: {result2.get('from_cache', False)}")
         
-        if result.get('blindspot'):
-            print(f"\nBlindspot: {result['blindspot']}")
+        # Cache stats
+        cache = get_cache_manager()
+        stats = cache.get_stats()
+        print(f"\n📊 Cache Stats: {stats}")
         
         print("\n" + "=" * 80)
     

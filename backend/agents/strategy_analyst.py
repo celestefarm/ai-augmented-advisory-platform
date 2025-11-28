@@ -4,19 +4,8 @@
 STRATEGY ANALYST AGENT
 Mission: Strategic framework application and decision reframing
 
-Core Capabilities:
-1. Apply strategic frameworks (Porter's Five Forces, Blue Ocean, etc.)
-2. Test underlying assumptions
-3. Reframe decisions to reveal true choices
-4. Identify strategic blindspots
-5. Reveal trade-offs (saying YES to X means NO to Y)
-
-Model Strategy:
-- Multi-model support: Claude, Gemini, Ollama
-- Automatic client detection based on model name
-- Fallback to Claude if model unavailable
-
-Output: Strategic analysis with framework application, assumption testing, and confidence marking
+Multi-Model Support: Claude, Gemini, Ollama
+Caching: Unified Redis cache layer
 """
 
 import time
@@ -24,10 +13,12 @@ import asyncio
 from typing import Dict, Optional
 import logging
 import aiohttp
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 from anthropic import AsyncAnthropic
+from agents.utils.cache import get_cache_manager
 
 # Try to import Gemini
 try:
@@ -42,29 +33,37 @@ class StrategyAnalystAgent:
     """
     Strategy Analyst - Strategic Framework & Decision Reframing Agent
     
-    Responsibilities:
-    - Apply strategic frameworks to real situations
-    - Reframe decisions to reveal core trade-offs
-    - Test assumptions and identify risks
-    - Find relevant precedents and patterns
-    - Identify strategic blindspots
-    
     Multi-Model Support:
     - Claude (claude-*): Anthropic API
     - Gemini (gemini-*): Google AI API
     - Ollama (llama*, mistral*, etc.): Local Ollama server
+    
+    Caching Strategy:
+    - System prompts: 1 hour (Redis)
+    - Model outputs: 30 minutes (Redis)
+    - User context: 5 minutes (Redis)
     """
+    
+    # Condensed prompt for Ollama (faster)
+    CONDENSED_SYSTEM_PROMPT = """You are a Strategy Analyst expert.
+
+Provide strategic analysis with:
+1. **Decision Reframe**: What they're REALLY choosing
+2. **Framework Applied**: Use Porter's Five Forces, Blue Ocean, Playing to Win, etc.
+3. **Assumptions Tested**: Challenge key assumptions
+4. **Trade-offs**: What YES means saying NO to
+5. **Confidence**: Mark as 🟢 High, 🟡 Medium, or 🔴 Low
+
+Be concise, actionable, specific to user's situation."""
     
     @staticmethod
     def _load_system_prompt() -> str:
         """Load Strategy Analyst Harvard-level prompt from external file"""
         from pathlib import Path
         
-        # Look for prompt file
         prompt_file = Path(__file__).parent / 'prompts' / 'strategy_analyst_prompt.txt'
         
         if not prompt_file.exists():
-            # Fallback to basic prompt if file doesn't exist
             logger.warning(f"Strategy Analyst prompt file not found: {prompt_file}")
             return """You are STRATEGY ANALYST, a strategic framework expert.
 Provide strategic analysis, framework application, and decision reframing.
@@ -73,7 +72,6 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         with open(prompt_file, 'r', encoding='utf-8') as f:
             return f.read()
     
-    # Agent system prompt loaded from external file
     SYSTEM_PROMPT = _load_system_prompt()
     
     def __init__(
@@ -82,25 +80,21 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         model: str = "claude-sonnet-4-20250514",
         google_api_key: Optional[str] = None
     ):
-        """
-        Initialize Strategy Analyst Agent with multi-model support
-        
-        Args:
-            anthropic_api_key: Anthropic API key
-            model: Model to use (auto-detects client type)
-            google_api_key: Google API key (for Gemini models)
-        """
+        """Initialize Strategy Analyst Agent with multi-model support and caching"""
         self.model = model
+        self.cache = get_cache_manager()  # ✅ UNIFIED CACHE
         
-        # ✅ AUTO-DETECT CLIENT TYPE BASED ON MODEL NAME
+        # Hash system prompts for cache keys
+        self.full_prompt_hash = hashlib.md5(self.SYSTEM_PROMPT.encode()).hexdigest()
+        self.condensed_prompt_hash = hashlib.md5(self.CONDENSED_SYSTEM_PROMPT.encode()).hexdigest()
+        
+        # AUTO-DETECT CLIENT TYPE
         if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
-            # Ollama model - use local Ollama server
             self.client_type = 'ollama'
             self.ollama_url = 'http://localhost:11434'
             logger.info(f"Strategy Analyst initialized with Ollama: {model}")
             
         elif model.startswith('gemini') and GEMINI_AVAILABLE and google_api_key:
-            # Gemini model - use Google AI
             self.client_type = 'gemini'
             genai.configure(api_key=google_api_key)
             self.gemini_client = genai.GenerativeModel(
@@ -113,7 +107,6 @@ Focus on actionable strategic intelligence specific to the user's situation."""
             logger.info(f"Strategy Analyst initialized with Gemini: {model}")
             
         else:
-            # Claude model (default)
             self.client_type = 'claude'
             self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
             logger.info(f"Strategy Analyst initialized with Claude: {model}")
@@ -124,20 +117,26 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         user_context: str,
         question_metadata: Dict
     ) -> Dict:
-        """
-        Analyze strategic question using appropriate model client
-        
-        Args:
-            question: User's strategic question
-            user_context: User profile and context
-            question_metadata: Question classification metadata
-            
-        Returns:
-            Dict with decision reframe, framework analysis, trade-offs, etc.
-        """
+        """Analyze strategic question using appropriate model client"""
         start_time = time.time()
         
         try:
+            # Check cache for complete agent response
+            question_hash = hashlib.md5(
+                f"{question}:{user_context}".encode()
+            ).hexdigest()
+            
+            cached_response = self.cache.get_agent_response(
+                question_hash,
+                'strategy_analyst'
+            )
+            
+            if cached_response:
+                logger.info("✅ Using cached agent response")
+                cached_response['response_time'] = round(time.time() - start_time, 2)
+                cached_response['from_cache'] = True
+                return cached_response
+            
             # Determine question type and framework
             question_type, suggested_framework = self._classify_strategic_question(question)
             
@@ -150,7 +149,7 @@ Focus on actionable strategic intelligence specific to the user's situation."""
                 suggested_framework
             )
             
-            # ✅ ROUTE TO APPROPRIATE CLIENT
+            # ROUTE TO APPROPRIATE CLIENT
             if self.client_type == 'ollama':
                 response_text = await self._call_ollama(prompt)
             elif self.client_type == 'gemini':
@@ -167,6 +166,14 @@ Focus on actionable strategic intelligence specific to the user's situation."""
             result['framework_suggested'] = suggested_framework
             result['response_time'] = round(time.time() - start_time, 2)
             result['success'] = True
+            result['from_cache'] = False
+            
+            # Cache the agent response
+            self.cache.set_agent_response(
+                question_hash,
+                'strategy_analyst',
+                result
+            )
             
             logger.info(
                 f"Strategy Analyst analysis complete - "
@@ -179,7 +186,6 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         except Exception as e:
             logger.error(f"Strategy Analyst analysis failed: {str(e)}", exc_info=True)
             
-            # Return fallback response
             return {
                 'agent_name': 'strategy_analyst',
                 'success': False,
@@ -187,33 +193,108 @@ Focus on actionable strategic intelligence specific to the user's situation."""
                 'response_time': round(time.time() - start_time, 2),
                 'decision_reframe': 'Unable to complete strategic analysis due to technical error.',
                 'confidence': '🔴 Low - Analysis failed',
-                'fallback': True
+                'fallback': True,
+                'from_cache': False
             }
     
     async def _call_claude(self, prompt: str) -> str:
-        """Call Claude API"""
+        """Call Claude API with Redis + Anthropic dual caching"""
+        
+        # Generate cache key
+        input_hash = hashlib.md5(prompt.encode()).hexdigest()
+        
+        # Try Redis cache first (30 min TTL)
+        cached_output = self.cache.get_model_output(
+            f"claude_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Claude response")
+            return cached_output
+        
+        # Call Claude API with Anthropic's prompt caching
+        logger.info("🌐 Calling Claude API with prompt caching")
         response = await self.claude_client.messages.create(
             model=self.model,
             max_tokens=1500,
             temperature=0.3,
-            system=self.SYSTEM_PROMPT,
+            system=[
+                {
+                    "type": "text",
+                    "text": self.SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"}  # Anthropic cache (5 min)
+                }
+            ],
             messages=[{'role': 'user', 'content': prompt}]
         )
-        return response.content[0].text
+        
+        output = response.content[0].text
+        
+        # Cache in Redis (30 min)
+        self.cache.set_model_output(
+            f"claude_{self.model}",
+            input_hash,
+            output
+        )
+        logger.info("💾 Cached Claude response in Redis")
+        
+        return output
     
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API"""
+        """Call Gemini API with Redis caching"""
+        
+        # Generate cache key
+        input_hash = hashlib.md5(prompt.encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"gemini_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Gemini response")
+            return cached_output
+        
+        # Call Gemini API
+        logger.info("🌐 Calling Gemini API")
         full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
         response = await asyncio.to_thread(
             self.gemini_client.generate_content,
             full_prompt
         )
-        return response.text
+        
+        output = response.text
+        
+        # Cache in Redis
+        self.cache.set_model_output(
+            f"gemini_{self.model}",
+            input_hash,
+            output
+        )
+        logger.info("💾 Cached Gemini response in Redis")
+        
+        return output
     
     async def _call_ollama(self, prompt: str) -> str:
-        """Call Ollama local server"""
-        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        """Call Ollama with condensed prompt and Redis caching"""
         
+        # Use condensed prompt for speed
+        full_prompt = f"{self.CONDENSED_SYSTEM_PROMPT}\n\n{prompt}"
+        
+        # Generate cache key
+        input_hash = hashlib.md5(full_prompt.encode()).hexdigest()
+        
+        # Try Redis cache first
+        cached_output = self.cache.get_model_output(
+            f"ollama_{self.model}",
+            input_hash
+        )
+        if cached_output:
+            logger.info("✅ Using Redis cached Ollama response")
+            return cached_output
+        
+        # Call Ollama API
+        logger.info("🌐 Calling Ollama API")
         async with aiohttp.ClientSession() as session:
             payload = {
                 "model": self.model,
@@ -232,56 +313,55 @@ Focus on actionable strategic intelligence specific to the user's situation."""
             ) as response:
                 if response.status == 200:
                     result = await response.json()
-                    return result.get('response', '')
+                    output = result.get('response', '')
+                    
+                    # Cache in Redis
+                    self.cache.set_model_output(
+                        f"ollama_{self.model}",
+                        input_hash,
+                        output
+                    )
+                    logger.info("💾 Cached Ollama response in Redis")
+                    
+                    return output
                 else:
                     error_text = await response.text()
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
     
     def _classify_strategic_question(self, question: str) -> tuple[str, str]:
-        """
-        Classify type of strategic question and suggest framework
-        
-        Returns:
-            Tuple of (question_type, suggested_framework)
-        """
+        """Classify type of strategic question and suggest framework"""
         question_lower = question.lower()
         
-        # Competitive dynamics
         if any(word in question_lower for word in [
             'competitive', 'competition', 'rivals', 'barriers to entry',
             'industry structure', 'threat of'
         ]):
             return ('competitive_dynamics', 'porters_five_forces')
         
-        # Differentiation
         if any(word in question_lower for word in [
             'differentiate', 'unique', 'stand out', 'value innovation',
             'blue ocean', 'uncontested'
         ]):
             return ('differentiation', 'blue_ocean')
         
-        # Market entry
         if any(word in question_lower for word in [
             'enter market', 'new market', 'expand to', 'where to play',
             'target market'
         ]):
             return ('market_entry', 'playing_to_win')
         
-        # Positioning
         if any(word in question_lower for word in [
             'position', 'messaging', 'brand', 'perception',
             'how we\'re seen'
         ]):
             return ('positioning', 'positioning')
         
-        # Trade-offs
         if any(word in question_lower for word in [
             'or', 'versus', 'vs', 'choose between', 'trade-off',
             'should we', 'which option'
         ]):
             return ('trade_offs', 'strategic_tradeoffs')
         
-        # Default to general strategic analysis
         return ('strategic_decision', 'playing_to_win')
     
     def _build_analysis_prompt(
@@ -313,11 +393,7 @@ Test key assumptions and identify trade-offs.
 """
     
     async def _parse_agent_response(self, response_text: str) -> Dict:
-        """
-        Parse agent response using LLM (Ollama) for robust extraction
-        
-        Handles natural language variations better than regex
-        """
+        """Parse agent response using LLM parser"""
         from .utils.llm_parser import get_parser
         
         try:
@@ -325,7 +401,6 @@ Test key assumptions and identify trade-offs.
             return await parser.parse_strategy_analyst_response(response_text)
         except Exception as e:
             logger.error(f"LLM parsing failed: {str(e)}")
-            # Ultimate fallback
             return {
                 'decision_reframe': response_text,
                 'confidence': '🟡 Medium',
@@ -341,7 +416,7 @@ Test key assumptions and identify trade-offs.
 
 # Example usage
 if __name__ == '__main__':
-    """Test Strategy Analyst agent"""
+    """Test Strategy Analyst agent with caching"""
     from decouple import config
     
     async def test_agent():
@@ -351,10 +426,9 @@ if __name__ == '__main__':
         agent = StrategyAnalystAgent(
             anthropic_api_key=anthropic_key,
             google_api_key=google_key,
-            model='claude-sonnet-4-20250514'  # Try: 'gemini-2.0-flash-exp' or 'llama3.1:8b'
+            model='claude-sonnet-4-20250514'
         )
         
-        # Test question
         test_question = "Should we target enterprise customers or stay focused on SMB?"
         test_context = """
 User: CEO at Series A SaaS startup
@@ -370,36 +444,33 @@ Recent questions: Market positioning, growth strategy, competitive advantage
         }
         
         print("\n" + "=" * 80)
-        print("TESTING STRATEGY ANALYST AGENT")
+        print("TESTING STRATEGY ANALYST AGENT WITH CACHE")
         print("=" * 80)
-        print(f"\nQuestion: {test_question}")
-        print(f"Context: {test_context.strip()}")
         
-        result = await agent.analyze(
+        # First call - should hit API
+        print("\n[TEST 1] First call (API)...")
+        result1 = await agent.analyze(
             question=test_question,
             user_context=test_context,
             question_metadata=test_metadata
         )
+        print(f"✅ Response Time: {result1['response_time']}s")
+        print(f"✅ From Cache: {result1.get('from_cache', False)}")
         
-        print("\n" + "=" * 80)
-        print("AGENT RESPONSE")
-        print("=" * 80)
-        print(f"\nSuccess: {result['success']}")
-        print(f"Response Time: {result['response_time']}s")
-        print(f"Model Used: {result.get('model_used', 'N/A')}")
-        print(f"Client Type: {result.get('client_type', 'N/A')}")
-        print(f"Framework Suggested: {result.get('framework_suggested', 'N/A')}")
-        print(f"\nDecision Reframe:\n{result['decision_reframe']}")
-        print(f"\nConfidence: {result['confidence']}")
+        # Second call - should hit cache
+        print("\n[TEST 2] Second call (Cache)...")
+        result2 = await agent.analyze(
+            question=test_question,
+            user_context=test_context,
+            question_metadata=test_metadata
+        )
+        print(f"✅ Response Time: {result2['response_time']}s")
+        print(f"✅ From Cache: {result2.get('from_cache', False)}")
         
-        if result.get('framework_applied'):
-            print(f"\nFramework Applied: {result['framework_applied']}")
-        
-        if result.get('trade_offs'):
-            print(f"\nTrade-offs: {result['trade_offs']}")
-        
-        if result.get('strategic_blindspot'):
-            print(f"\nStrategic Blindspot: {result['strategic_blindspot']}")
+        # Cache stats
+        cache = get_cache_manager()
+        stats = cache.get_stats()
+        print(f"\n📊 Cache Stats: {stats}")
         
         print("\n" + "=" * 80)
     
