@@ -1,10 +1,10 @@
-# agents/orchestrator/nodes.py
+# agents/orchestration/nodes.py - CORRECTED VERSION
 
 """
-LangGraph Node Implementations - Optimized for Speed
+LangGraph Node Implementations - Optimized for Speed with Intelligent Model Selection
 
 Each node is a function that takes state and returns updated state.
-Focus: Fast, parallel execution, minimal overhead.
+Focus: Fast, parallel execution, minimal overhead, smart model routing.
 """
 
 import time
@@ -15,6 +15,8 @@ from .state import MultiAgentState
 
 logger = logging.getLogger(__name__)
 
+# ✅ FIXED: Import ModelRouter
+from agents.services.model_router import ModelRouter
 
 # ============================================================================
 # STAGE 1: ANALYZE - Question Classification
@@ -97,26 +99,26 @@ async def analyze_question_node(state: MultiAgentState) -> MultiAgentState:
 
 
 # ============================================================================
-# STAGE 2: ROUTE - Agent Selection
+# STAGE 2: ROUTE - Agent Selection + Model Selection
 # ============================================================================
 
 async def route_to_agents_node(state: MultiAgentState) -> MultiAgentState:
     """
-    Stage 2: Decide which agents to activate
+    Stage 2: Decide which agents to activate AND which model to use
     
     Fast: Rule-based routing (no LLM call)
     Time: ~10ms
     """
     stage_start = time.time()
-    logger.info("Stage 2: Routing to agents...")
+    logger.info("Stage 2: Routing to agents and selecting model...")
     
     try:
-        # Import agent router (from your Week 3 work)
+        # Import agent router
         from agents.services.agent_router import AgentRouter
         
         router = AgentRouter()
         
-        # Get routing decision - CORRECTED: Use individual parameters
+        # Get routing decision
         routing_decision = router.route_question(
             question_type=state['question_type'],
             domains=state['domains'],
@@ -124,7 +126,7 @@ async def route_to_agents_node(state: MultiAgentState) -> MultiAgentState:
             urgency=state['urgency']
         )
         
-        # Update state - routing_decision is an object, not dict
+        # Update state with routing decision
         state['routing_decision'] = {
             'agents': routing_decision.agent_names,
             'execution_strategy': routing_decision.execution_strategy,
@@ -134,38 +136,63 @@ async def route_to_agents_node(state: MultiAgentState) -> MultiAgentState:
         state['execution_strategy'] = routing_decision.execution_strategy
         state['routing_reasoning'] = routing_decision.reasoning
         
+        # ✅ FIXED: Select optimal model based on question characteristics
+        model_router = ModelRouter()
+        model_selection = model_router.select_model(
+            question_type=state['question_type'],  # ✅ Use correct key
+            domains=state['domains'],              # ✅ Use correct key
+            urgency=state['urgency'],              # ✅ Use correct key
+            complexity=state['complexity'],        # ✅ Use correct key
+            emotional_state=state.get('emotional_state', 'neutral')
+        )
+        
+        # Store model selection in state
+        state['selected_model'] = str(model_selection.model_name.value)
+        state['model_reasoning'] = model_selection.reasoning
+        state['estimated_latency'] = model_selection.estimated_latency
+        state['estimated_cost'] = model_selection.estimated_cost
+        
         state['_current_stage'] = 'routed'
         
         elapsed = time.time() - stage_start
         logger.info(
-            f"✅ Routing complete - {elapsed:.3f}s - "
-            f"Activating: {', '.join(state['agents_to_activate'])}"
+            f"✅ Routing complete - {elapsed:.3f}s\n"
+            f"   Agents: {', '.join(state['agents_to_activate'])}\n"
+            f"   Model: {model_selection.model_name}\n"
+            f"   Reason: {model_selection.reasoning}\n"
+            f"   Est. Latency: {model_selection.estimated_latency}s"
         )
         
         return state
         
     except Exception as e:
-        logger.error(f"❌ Routing failed: {str(e)}")
-        # Fallback: activate all agents
+        logger.error(f"❌ Routing failed: {str(e)}", exc_info=True)
+        # Fallback: activate all agents with Sonnet
         state['agents_to_activate'] = ['market_compass', 'financial_guardian', 'strategy_analyst']
         state['execution_strategy'] = 'parallel'
         state['routing_reasoning'] = 'Fallback: All agents'
+        state['selected_model'] = 'claude-sonnet-4-20250514'  # Fallback model
+        state['model_reasoning'] = 'Fallback: Default model'
         state['_current_stage'] = 'routed_with_errors'
         return state
 
 
 # ============================================================================
-# STAGE 3: EXECUTE - Run Agents in Parallel (FAST!)
+# STAGE 3: EXECUTE - Run Agents in Parallel with Selected Model
 # ============================================================================
 
 async def execute_agents_parallel_node(state: MultiAgentState) -> MultiAgentState:
     """
-    Stage 3: Execute selected agents IN PARALLEL
+    Stage 3: Execute selected agents IN PARALLEL with optimal model
     
-    CRITICAL FOR SPEED: All agents run simultaneously
-    Time: ~5s (longest agent) instead of ~13s (sequential)
+    CRITICAL FOR SPEED: 
+    - All agents run simultaneously
+    - Use intelligent model selection (Haiku for simple, Opus for complex)
     
-    This is the core speed optimization!
+    Time: 
+    - Simple questions: ~8s (Haiku)
+    - Medium questions: ~50s (Sonnet)  
+    - Complex questions: ~70s (Opus)
     """
     stage_start = time.time()
     logger.info("Stage 3: Executing agents in parallel...")
@@ -177,24 +204,32 @@ async def execute_agents_parallel_node(state: MultiAgentState) -> MultiAgentStat
         from agents.strategy_analyst import StrategyAnalystAgent
         from decouple import config
         
-        # Initialize agents
+        # ✅ FIXED: Get selected model from state
+        selected_model = state.get('selected_model', 'claude-sonnet-4-20250514')
+        
+        logger.info(f"🤖 Using model: {selected_model}")
+        
+        # Initialize agents with selected model
         agents_map = {}
         
         if 'market_compass' in state['agents_to_activate']:
             agents_map['market_compass'] = MarketCompassAgent(
-                anthropic_api_key=config('ANTHROPIC_API_KEY', default=None),
+                anthropic_api_key=config('ANTHROPIC_API_KEY'),
                 google_api_key=config('GOOGLE_API_KEY', default=None),
-                use_web_search=True
+                use_web_search=False,
+                model=selected_model  # ✅ FIXED: Pass selected model
             )
         
         if 'financial_guardian' in state['agents_to_activate']:
             agents_map['financial_guardian'] = FinancialGuardianAgent(
-                anthropic_api_key=config('ANTHROPIC_API_KEY', default=None)
+                anthropic_api_key=config('ANTHROPIC_API_KEY'),
+                model=selected_model  # ✅ FIXED: Pass selected model
             )
         
         if 'strategy_analyst' in state['agents_to_activate']:
             agents_map['strategy_analyst'] = StrategyAnalystAgent(
-                anthropic_api_key=config('ANTHROPIC_API_KEY', default=None)
+                anthropic_api_key=config('ANTHROPIC_API_KEY'),
+                model=selected_model  # ✅ FIXED: Pass selected model
             )
         
         # Build metadata for agents
@@ -218,7 +253,7 @@ async def execute_agents_parallel_node(state: MultiAgentState) -> MultiAgentStat
             tasks.append(task)
             agent_names.append(agent_name)
         
-        logger.info(f"🚀 Launching {len(tasks)} agents in parallel...")
+        logger.info(f"🚀 Launching {len(tasks)} agents in parallel with {selected_model}...")
         
         # Execute ALL agents in parallel - THIS IS THE SPEED BOOST!
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -236,7 +271,7 @@ async def execute_agents_parallel_node(state: MultiAgentState) -> MultiAgentStat
                 error_msg = str(result)
                 agent_errors[agent_name] = error_msg
                 agents_failed.append(agent_name)
-                logger.error(f"❌ {agent_name} failed: {error_msg}")
+                logger.error(f"❌ {agent_name} error: {error_msg}")
             
             elif result.get('success', False):
                 # Agent succeeded
@@ -266,7 +301,8 @@ async def execute_agents_parallel_node(state: MultiAgentState) -> MultiAgentStat
         elapsed = time.time() - stage_start
         logger.info(
             f"✅ Parallel execution complete - {elapsed:.2f}s - "
-            f"Success: {len(agents_succeeded)}/{len(agent_names)}"
+            f"Success: {len(agents_succeeded)}/{len(agent_names)} "
+            f"(Model: {selected_model})"
         )
         
         return state

@@ -45,6 +45,10 @@ class MultiAgentState(TypedDict, total=False):
     agents_to_activate: List[str]           # Which agents to use
     execution_strategy: str                 # parallel/sequential
     routing_reasoning: str                  # Why these agents selected
+    selected_model: Optional[str]           # Selected model name
+    model_reasoning: Optional[str]          # Model selection reasoning  
+    estimated_latency: Optional[float]      # Expected latency
+    estimated_cost: Optional[float]   
     
     # ============================================================================
     # STAGE 3: EXECUTE (Agent Responses)

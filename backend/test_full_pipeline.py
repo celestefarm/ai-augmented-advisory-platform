@@ -9,7 +9,7 @@ from orchestrator import run_multi_agent_pipeline
 
 async def test():
     result = await run_multi_agent_pipeline(
-        question="Investors want Series C for $100M+ by 2027 (50%+ YoY). Need to hire 60+, go horizontal, shift model. Alternative: pass, optimize for profitability, $30-40M, acquired for $200-300M in 3-5 years. Built $1B company or $300M company?",
+        question="What is 2 + 2?",
         user_context="Series A SaaS CEO, 100 SMB customers, $30M ARR",
         workspace_id="test_ws",
         user_id="test_user"

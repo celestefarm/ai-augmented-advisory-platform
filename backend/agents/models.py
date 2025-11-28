@@ -363,3 +363,44 @@ class AgentResponse(BaseModel):
         )
         
         return float(costs['total_cost'])
+    
+
+class SpecialistAgentExecution(BaseModel):
+    """
+    Records individual specialist agent executions within orchestration
+    """
+    AGENT_TYPES = [
+        ('market_compass', _('Market Compass')),
+        ('financial_guardian', _('Financial Guardian')),
+        ('strategy_analyst', _('Strategy Analyst')),
+    ]
+    
+    agent_response = models.ForeignKey(
+        AgentResponse,
+        on_delete=models.CASCADE,
+        related_name='specialist_executions'
+    )
+    agent_name = models.CharField(max_length=50, choices=AGENT_TYPES, db_index=True)
+    agent_output = models.TextField()
+    execution_time = models.FloatField()
+    success = models.BooleanField(default=True, db_index=True)
+    error_message = models.TextField(blank=True)
+    
+    # Token usage for this specific agent
+    prompt_tokens = models.IntegerField(default=0)
+    completion_tokens = models.IntegerField(default=0)
+    cost = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    
+    objects = BaseModelManager()
+    
+    class Meta(BaseModel.Meta):
+        db_table = 'specialist_agent_executions'
+        verbose_name = _('specialist agent execution')
+        verbose_name_plural = _('specialist agent executions')
+        indexes = [
+            models.Index(fields=['agent_response', 'created_at']),
+            models.Index(fields=['agent_name', 'success']),
+        ]
+    
+    def __str__(self):  # ✅ ADD THIS
+        return f"{self.agent_name} - {self.execution_time:.2f}s ({'✓' if self.success else '✗'})"

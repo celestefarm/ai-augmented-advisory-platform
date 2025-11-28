@@ -12,9 +12,9 @@ Core Capabilities:
 5. Reveal trade-offs (saying YES to X means NO to Y)
 
 Model Strategy:
-- Primary: Claude Sonnet (excellent strategic reasoning)
-- Temperature: 0.7 (standard)
-- Pure reasoning, no external tools needed
+- Multi-model support: Claude, Gemini, Ollama
+- Automatic client detection based on model name
+- Fallback to Claude if model unavailable
 
 Output: Strategic analysis with framework application, assumption testing, and confidence marking
 """
@@ -23,10 +23,19 @@ import time
 import asyncio
 from typing import Dict, Optional
 import logging
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 from anthropic import AsyncAnthropic
+
+# Try to import Gemini
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("Google Generative AI SDK not installed. Gemini unavailable.")
 
 
 class StrategyAnalystAgent:
@@ -39,6 +48,11 @@ class StrategyAnalystAgent:
     - Test assumptions and identify risks
     - Find relevant precedents and patterns
     - Identify strategic blindspots
+    
+    Multi-Model Support:
+    - Claude (claude-*): Anthropic API
+    - Gemini (gemini-*): Google AI API
+    - Ollama (llama*, mistral*, etc.): Local Ollama server
     """
     
     @staticmethod
@@ -62,15 +76,47 @@ Focus on actionable strategic intelligence specific to the user's situation."""
     # Agent system prompt loaded from external file
     SYSTEM_PROMPT = _load_system_prompt()
     
-    def __init__(self, anthropic_api_key: str):
+    def __init__(
+        self,
+        anthropic_api_key: str,
+        model: str = "claude-sonnet-4-20250514",
+        google_api_key: Optional[str] = None
+    ):
         """
-        Initialize Strategy Analyst Agent
+        Initialize Strategy Analyst Agent with multi-model support
         
         Args:
             anthropic_api_key: Anthropic API key
+            model: Model to use (auto-detects client type)
+            google_api_key: Google API key (for Gemini models)
         """
-        self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
-        logger.info("Strategy Analyst initialized with Claude Sonnet")
+        self.model = model
+        
+        # ✅ AUTO-DETECT CLIENT TYPE BASED ON MODEL NAME
+        if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
+            # Ollama model - use local Ollama server
+            self.client_type = 'ollama'
+            self.ollama_url = 'http://localhost:11434'
+            logger.info(f"Strategy Analyst initialized with Ollama: {model}")
+            
+        elif model.startswith('gemini') and GEMINI_AVAILABLE and google_api_key:
+            # Gemini model - use Google AI
+            self.client_type = 'gemini'
+            genai.configure(api_key=google_api_key)
+            self.gemini_client = genai.GenerativeModel(
+                model_name=model,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=1500,
+                    temperature=0.3,
+                )
+            )
+            logger.info(f"Strategy Analyst initialized with Gemini: {model}")
+            
+        else:
+            # Claude model (default)
+            self.client_type = 'claude'
+            self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
+            logger.info(f"Strategy Analyst initialized with Claude: {model}")
     
     async def analyze(
         self,
@@ -79,7 +125,7 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         question_metadata: Dict
     ) -> Dict:
         """
-        Analyze strategic question and provide framework-based insights
+        Analyze strategic question using appropriate model client
         
         Args:
             question: User's strategic question
@@ -104,20 +150,18 @@ Focus on actionable strategic intelligence specific to the user's situation."""
                 suggested_framework
             )
             
-            # Call Claude
-            response = await self.claude_client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1500,
-                temperature=0.3,
-                system=self.SYSTEM_PROMPT,
-                messages=[{'role': 'user', 'content': prompt}]
-            )
-            
-            response_text = response.content[0].text
+            # ✅ ROUTE TO APPROPRIATE CLIENT
+            if self.client_type == 'ollama':
+                response_text = await self._call_ollama(prompt)
+            elif self.client_type == 'gemini':
+                response_text = await self._call_gemini(prompt)
+            else:  # claude
+                response_text = await self._call_claude(prompt)
             
             # Parse response
-            result = self._parse_agent_response(response_text)
-            result['model_used'] = 'claude-sonnet-4'
+            result = await self._parse_agent_response(response_text)
+            result['model_used'] = self.model
+            result['client_type'] = self.client_type
             result['agent_name'] = 'strategy_analyst'
             result['question_type'] = question_type
             result['framework_suggested'] = suggested_framework
@@ -127,7 +171,7 @@ Focus on actionable strategic intelligence specific to the user's situation."""
             logger.info(
                 f"Strategy Analyst analysis complete - "
                 f"type={question_type}, framework={suggested_framework}, "
-                f"time={result['response_time']}s"
+                f"client={self.client_type}, time={result['response_time']}s"
             )
             
             return result
@@ -145,6 +189,53 @@ Focus on actionable strategic intelligence specific to the user's situation."""
                 'confidence': '🔴 Low - Analysis failed',
                 'fallback': True
             }
+    
+    async def _call_claude(self, prompt: str) -> str:
+        """Call Claude API"""
+        response = await self.claude_client.messages.create(
+            model=self.model,
+            max_tokens=1500,
+            temperature=0.3,
+            system=self.SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        return response.content[0].text
+    
+    async def _call_gemini(self, prompt: str) -> str:
+        """Call Gemini API"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        response = await asyncio.to_thread(
+            self.gemini_client.generate_content,
+            full_prompt
+        )
+        return response.text
+    
+    async def _call_ollama(self, prompt: str) -> str:
+        """Call Ollama local server"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "model": self.model,
+                "prompt": full_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 1500
+                }
+            }
+            
+            async with session.post(
+                f"{self.ollama_url}/api/generate",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result.get('response', '')
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Ollama API error {response.status}: {error_text}")
     
     def _classify_strategic_question(self, question: str) -> tuple[str, str]:
         """
@@ -204,33 +295,34 @@ Focus on actionable strategic intelligence specific to the user's situation."""
         """Build prompt for strategic analysis"""
         
         return f"""
-            USER CONTEXT:
-            {user_context}
+USER CONTEXT:
+{user_context}
 
-            QUESTION TYPE: {question_type}
-            SUGGESTED FRAMEWORK: {suggested_framework}
-            COMPLEXITY: {question_metadata.get('complexity', 'medium')}
-            URGENCY: {question_metadata.get('urgency', 'routine')}
+QUESTION TYPE: {question_type}
+SUGGESTED FRAMEWORK: {suggested_framework}
+COMPLEXITY: {question_metadata.get('complexity', 'medium')}
+URGENCY: {question_metadata.get('urgency', 'routine')}
 
-            USER QUESTION:
-            {question}
+USER QUESTION:
+{question}
 
-            Provide Strategy Analyst analysis following the framework.
-            Reframe the decision to reveal what they're REALLY choosing.
-            Apply the most relevant strategic framework.
-            Test key assumptions and identify trade-offs.
-            """
+Provide Strategy Analyst analysis following the framework.
+Reframe the decision to reveal what they're REALLY choosing.
+Apply the most relevant strategic framework.
+Test key assumptions and identify trade-offs.
+"""
     
-    def _parse_agent_response(self, response_text: str) -> Dict:
+    async def _parse_agent_response(self, response_text: str) -> Dict:
         """
         Parse agent response using LLM (Ollama) for robust extraction
         
         Handles natural language variations better than regex
         """
-        from .utils.llm_parser import LLMResponseParser
+        from .utils.llm_parser import get_parser
         
         try:
-            return LLMResponseParser.parse_strategy_analyst_response(response_text)
+            parser = get_parser()
+            return await parser.parse_strategy_analyst_response(response_text)
         except Exception as e:
             logger.error(f"LLM parsing failed: {str(e)}")
             # Ultimate fallback
@@ -254,17 +346,22 @@ if __name__ == '__main__':
     
     async def test_agent():
         anthropic_key = config('ANTHROPIC_API_KEY')
+        google_key = config('GOOGLE_AI_API_KEY', default=None)
         
-        agent = StrategyAnalystAgent(anthropic_api_key=anthropic_key)
+        agent = StrategyAnalystAgent(
+            anthropic_api_key=anthropic_key,
+            google_api_key=google_key,
+            model='claude-sonnet-4-20250514'  # Try: 'gemini-2.0-flash-exp' or 'llama3.1:8b'
+        )
         
         # Test question
         test_question = "Should we target enterprise customers or stay focused on SMB?"
         test_context = """
-        User: CEO at Series A SaaS startup
-        Company: B2B Project Management Tool
-        Current State: 100 SMB customers, $500K ARR, team of 12
-        Recent questions: Market positioning, growth strategy, competitive advantage
-        """
+User: CEO at Series A SaaS startup
+Company: B2B Project Management Tool
+Current State: 100 SMB customers, $500K ARR, team of 12
+Recent questions: Market positioning, growth strategy, competitive advantage
+"""
         test_metadata = {
             'question_type': 'decision',
             'domains': ['strategy', 'market'],
@@ -290,6 +387,7 @@ if __name__ == '__main__':
         print(f"\nSuccess: {result['success']}")
         print(f"Response Time: {result['response_time']}s")
         print(f"Model Used: {result.get('model_used', 'N/A')}")
+        print(f"Client Type: {result.get('client_type', 'N/A')}")
         print(f"Framework Suggested: {result.get('framework_suggested', 'N/A')}")
         print(f"\nDecision Reframe:\n{result['decision_reframe']}")
         print(f"\nConfidence: {result['confidence']}")

@@ -12,9 +12,9 @@ Core Capabilities:
 5. ROI and payback period calculations
 
 Model Strategy:
-- Primary: Claude Sonnet (excellent math reasoning)
-- Temperature: 0.5 (lower for accuracy)
-- No external tools needed (pure reasoning)
+- Multi-model support: Claude, Gemini, Ollama
+- Automatic client detection based on model name
+- Lower temperature (0.3) for mathematical accuracy
 
 Output: Financial analysis with calculations, scenarios, constraints, and confidence marking
 """
@@ -23,10 +23,19 @@ import time
 import asyncio
 from typing import Dict, Optional
 import logging
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 from anthropic import AsyncAnthropic
+
+# Try to import Gemini
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("Google Generative AI SDK not installed. Gemini unavailable.")
 
 
 class FinancialGuardianAgent:
@@ -39,6 +48,11 @@ class FinancialGuardianAgent:
     - Reveal cash constraints
     - Provide scenario ranges
     - Calculate ROI and payback periods
+    
+    Multi-Model Support:
+    - Claude (claude-*): Anthropic API
+    - Gemini (gemini-*): Google AI API
+    - Ollama (llama*, mistral*, etc.): Local Ollama server
     """
     
     @staticmethod
@@ -62,15 +76,47 @@ class FinancialGuardianAgent:
     # Agent system prompt loaded from external file
     SYSTEM_PROMPT = _load_system_prompt()
     
-    def __init__(self, anthropic_api_key: str):
+    def __init__(
+        self,
+        anthropic_api_key: str,
+        model: str = "claude-sonnet-4-20250514",
+        google_api_key: Optional[str] = None
+    ):
         """
-        Initialize Financial Guardian Agent
+        Initialize Financial Guardian Agent with multi-model support
         
         Args:
             anthropic_api_key: Anthropic API key
+            model: Model to use (auto-detects client type)
+            google_api_key: Google API key (for Gemini models)
         """
-        self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
-        logger.info("Financial Guardian initialized with Claude Sonnet")
+        self.model = model
+        
+        # ✅ AUTO-DETECT CLIENT TYPE
+        if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
+            # Ollama model
+            self.client_type = 'ollama'
+            self.ollama_url = 'http://localhost:11434'
+            logger.info(f"Financial Guardian initialized with Ollama: {model}")
+            
+        elif model.startswith('gemini') and GEMINI_AVAILABLE and google_api_key:
+            # Gemini model
+            self.client_type = 'gemini'
+            genai.configure(api_key=google_api_key)
+            self.gemini_client = genai.GenerativeModel(
+                model_name=model,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=1500,
+                    temperature=0.3,  # Lower for math accuracy
+                )
+            )
+            logger.info(f"Financial Guardian initialized with Gemini: {model}")
+            
+        else:
+            # Claude model (default)
+            self.client_type = 'claude'
+            self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
+            logger.info(f"Financial Guardian initialized with Claude: {model}")
     
     async def analyze(
         self,
@@ -103,20 +149,18 @@ class FinancialGuardianAgent:
                 question_type
             )
             
-            # Call Claude with lower temperature for accuracy
-            response = await self.claude_client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1500,
-                temperature=0.3,  # Lower for math accuracy
-                system=self.SYSTEM_PROMPT,
-                messages=[{'role': 'user', 'content': prompt}]
-            )
-            
-            response_text = response.content[0].text
+            # ✅ ROUTE TO APPROPRIATE CLIENT
+            if self.client_type == 'ollama':
+                response_text = await self._call_ollama(prompt)
+            elif self.client_type == 'gemini':
+                response_text = await self._call_gemini(prompt)
+            else:  # claude
+                response_text = await self._call_claude(prompt)
             
             # Parse response
-            result = self._parse_agent_response(response_text)
-            result['model_used'] = 'claude-sonnet-4'
+            result = await self._parse_agent_response(response_text)
+            result['model_used'] = self.model
+            result['client_type'] = self.client_type
             result['agent_name'] = 'financial_guardian'
             result['question_type'] = question_type
             result['response_time'] = round(time.time() - start_time, 2)
@@ -124,7 +168,8 @@ class FinancialGuardianAgent:
             
             logger.info(
                 f"Financial Guardian analysis complete - "
-                f"type={question_type}, time={result['response_time']}s"
+                f"type={question_type}, client={self.client_type}, "
+                f"time={result['response_time']}s"
             )
             
             return result
@@ -142,6 +187,53 @@ class FinancialGuardianAgent:
                 'confidence': '🔴 Low - Analysis failed',
                 'fallback': True
             }
+    
+    async def _call_claude(self, prompt: str) -> str:
+        """Call Claude API"""
+        response = await self.claude_client.messages.create(
+            model=self.model,
+            max_tokens=1500,
+            temperature=0.3,  # Lower for math accuracy
+            system=self.SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        return response.content[0].text
+    
+    async def _call_gemini(self, prompt: str) -> str:
+        """Call Gemini API"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        response = await asyncio.to_thread(
+            self.gemini_client.generate_content,
+            full_prompt
+        )
+        return response.text
+    
+    async def _call_ollama(self, prompt: str) -> str:
+        """Call Ollama local server"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "model": self.model,
+                "prompt": full_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,  # Lower for math accuracy
+                    "num_predict": 1500
+                }
+            }
+            
+            async with session.post(
+                f"{self.ollama_url}/api/generate",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result.get('response', '')
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Ollama API error {response.status}: {error_text}")
     
     def _classify_financial_question(self, question: str) -> str:
         """
@@ -215,17 +307,18 @@ class FinancialGuardianAgent:
             Provide scenario ranges (best/realistic/worst).
             Identify critical constraints.
             """
-    
-    def _parse_agent_response(self, response_text: str) -> Dict:
+                
+    async def _parse_agent_response(self, response_text: str) -> Dict:
         """
         Parse agent response using LLM (Ollama) for robust extraction
         
         Handles natural language variations better than regex
         """
-        from .utils.llm_parser import LLMResponseParser
+        from .utils.llm_parser import get_parser
         
         try:
-            return LLMResponseParser.parse_financial_guardian_response(response_text)
+            parser = get_parser()
+            return await parser.parse_financial_guardian_response(response_text)
         except Exception as e:
             logger.error(f"LLM parsing failed: {str(e)}")
             # Ultimate fallback
@@ -251,17 +344,22 @@ if __name__ == '__main__':
     
     async def test_agent():
         anthropic_key = config('ANTHROPIC_API_KEY')
+        google_key = config('GOOGLE_AI_API_KEY', default=None)
         
-        agent = FinancialGuardianAgent(anthropic_api_key=anthropic_key)
+        agent = FinancialGuardianAgent(
+            anthropic_api_key=anthropic_key,
+            google_api_key=google_key,
+            model='claude-sonnet-4-20250514'  # Try: 'gemini-2.0-flash-exp' or 'llama3.1:8b'
+        )
         
         # Test question
         test_question = "Is our CAC of $1,500 sustainable with an LTV of $4,200?"
         test_context = """
-        User: CFO at Series A SaaS startup
-        Company: B2B Marketing Platform
-        Current Metrics: $2M ARR, 50 customers, $150K MRR burn rate
-        Recent questions: Unit economics, fundraising runway
-        """
+            User: CFO at Series A SaaS startup
+            Company: B2B Marketing Platform
+            Current Metrics: $2M ARR, 50 customers, $150K MRR burn rate
+            Recent questions: Unit economics, fundraising runway
+            """
         test_metadata = {
             'question_type': 'validation',
             'domains': ['finance'],
@@ -287,6 +385,7 @@ if __name__ == '__main__':
         print(f"\nSuccess: {result['success']}")
         print(f"Response Time: {result['response_time']}s")
         print(f"Model Used: {result.get('model_used', 'N/A')}")
+        print(f"Client Type: {result.get('client_type', 'N/A')}")
         print(f"\nCalculation:\n{result['calculation']}")
         print(f"\nConfidence: {result['confidence']}")
         

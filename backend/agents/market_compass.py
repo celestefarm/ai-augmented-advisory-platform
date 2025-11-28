@@ -11,9 +11,9 @@ Core Capabilities:
 4. Trend analysis and blindspot detection
 
 Model Strategy:
-- Primary: Gemini 2.0 Pro (for web search capability)
-- Fallback: Claude Sonnet (for analysis without search)
-- Two-phase for complex queries: Gemini (research) → Claude (synthesis)
+- Multi-model support: Claude, Gemini, Ollama
+- Automatic client detection based on model name
+- Gemini preferred for web search capability
 
 Output: Market intelligence with confidence marking, sources, and blindspot detection
 """
@@ -22,6 +22,7 @@ import time
 import asyncio
 from typing import Dict, Optional, Tuple
 import logging
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,11 @@ class MarketCompassAgent:
     - Identify market blindspots
     - Assess market opportunities with timing
     - Translate signals to user-specific implications
+    
+    Multi-Model Support:
+    - Claude (claude-*): Anthropic API
+    - Gemini (gemini-*): Google AI API with web search
+    - Ollama (llama*, mistral*, etc.): Local Ollama server
     """
     
     @staticmethod
@@ -61,8 +67,8 @@ class MarketCompassAgent:
             # Fallback to basic prompt if file doesn't exist
             logger.warning(f"Market Compass prompt file not found: {prompt_file}")
             return """You are MARKET COMPASS, a market intelligence agent.
-                Provide market analysis, competitive intelligence, and trend insights.
-                Focus on actionable intelligence specific to the user's situation."""
+Provide market analysis, competitive intelligence, and trend insights.
+Focus on actionable intelligence specific to the user's situation."""
                         
         with open(prompt_file, 'r', encoding='utf-8') as f:
             return f.read()
@@ -74,34 +80,46 @@ class MarketCompassAgent:
         self,
         anthropic_api_key: str,
         google_api_key: Optional[str] = None,
+        model: str = "claude-sonnet-4-20250514",
         use_web_search: bool = True
     ):
         """
-        Initialize Market Compass Agent
+        Initialize Market Compass Agent with multi-model support
         
         Args:
-            anthropic_api_key: Anthropic API key (fallback)
-            google_api_key: Google AI API key (for Gemini + search)
+            anthropic_api_key: Anthropic API key
+            google_api_key: Google AI API key (for Gemini)
+            model: Model to use (auto-detects client type)
             use_web_search: Whether to use real-time web search
         """
-        self.use_web_search = use_web_search and GEMINI_AVAILABLE and google_api_key
+        self.model = model
+        self.use_web_search = use_web_search
         
-        # Initialize Claude (fallback)
-        self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
-        
-        # Initialize Gemini if available
-        if self.use_web_search:
+        # ✅ AUTO-DETECT CLIENT TYPE
+        if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
+            # Ollama model
+            self.client_type = 'ollama'
+            self.ollama_url = 'http://localhost:11434'
+            logger.info(f"Market Compass initialized with Ollama: {model}")
+            
+        elif model.startswith('gemini') and GEMINI_AVAILABLE and google_api_key:
+            # Gemini model with web search
+            self.client_type = 'gemini'
             genai.configure(api_key=google_api_key)
             self.gemini_model = genai.GenerativeModel(
-                model_name='gemini-2.0-flash-exp',  # Fast model with search
+                model_name=model,
                 generation_config=genai.types.GenerationConfig(
                     max_output_tokens=1500,
                     temperature=0.3,
                 )
             )
-            logger.info("Market Compass initialized with Gemini web search")
+            logger.info(f"Market Compass initialized with Gemini: {model}")
+            
         else:
-            logger.info("Market Compass initialized with Claude (no web search)")
+            # Claude model (default)
+            self.client_type = 'claude'
+            self.claude_client = AsyncAnthropic(api_key=anthropic_api_key)
+            logger.info(f"Market Compass initialized with Claude: {model}")
     
     async def analyze(
         self,
@@ -126,39 +144,44 @@ class MarketCompassAgent:
             # Determine question type
             question_type = self._classify_market_question(question)
             
-            # Route to appropriate analysis method
-            if question_type in ['market_data', 'competitive_intelligence'] and self.use_web_search:
-                # Use Gemini with web search for factual retrieval
-                result = await self._analyze_with_web_search(
-                    question,
-                    user_context,
-                    question_metadata,
-                    question_type
-                )
-            elif question_type == 'signal_interpretation':
-                # Two-phase: Gemini research + Claude interpretation
-                result = await self._analyze_signal_two_phase(
-                    question,
-                    user_context,
-                    question_metadata
-                )
-            else:
-                # Use Claude for strategic analysis
-                result = await self._analyze_with_claude(
-                    question,
-                    user_context,
-                    question_metadata
-                )
+            # Build prompt
+            prompt = self._build_analysis_prompt(
+                question,
+                user_context,
+                question_metadata,
+                question_type
+            )
             
-            # Add timing metadata
-            result['response_time'] = round(time.time() - start_time, 2)
+            # ✅ ROUTE TO APPROPRIATE CLIENT
+            if self.client_type == 'ollama':
+                response_text = await self._call_ollama(prompt)
+                web_search_used = False
+            elif self.client_type == 'gemini':
+                # Use Gemini with web search if enabled
+                if self.use_web_search and question_type in ['market_data', 'competitive_intelligence']:
+                    response_text = await self._call_gemini_with_search(prompt)
+                    web_search_used = True
+                else:
+                    response_text = await self._call_gemini(prompt)
+                    web_search_used = False
+            else:  # claude
+                response_text = await self._call_claude(prompt)
+                web_search_used = False
+            
+            # Parse response
+            result = await self._parse_agent_response(response_text)
+            result['model_used'] = self.model
+            result['client_type'] = self.client_type
+            result['web_search_used'] = web_search_used
             result['agent_name'] = 'market_compass'
             result['question_type'] = question_type
+            result['response_time'] = round(time.time() - start_time, 2)
             result['success'] = True
             
             logger.info(
                 f"Market Compass analysis complete - "
-                f"type={question_type}, time={result['response_time']}s"
+                f"type={question_type}, client={self.client_type}, "
+                f"search={web_search_used}, time={result['response_time']}s"
             )
             
             return result
@@ -176,6 +199,63 @@ class MarketCompassAgent:
                 'confidence': '🔴 Low - Analysis failed',
                 'fallback': True
             }
+    
+    async def _call_claude(self, prompt: str) -> str:
+        """Call Claude API"""
+        response = await self.claude_client.messages.create(
+            model=self.model,
+            max_tokens=1500,
+            temperature=0.7,
+            system=self.SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        return response.content[0].text
+    
+    async def _call_gemini(self, prompt: str) -> str:
+        """Call Gemini API (without web search)"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        response = await asyncio.to_thread(
+            self.gemini_model.generate_content,
+            full_prompt
+        )
+        return response.text
+    
+    async def _call_gemini_with_search(self, prompt: str) -> str:
+        """Call Gemini API with Google Search grounding"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        response = await asyncio.to_thread(
+            self.gemini_model.generate_content,
+            full_prompt,
+            tools=[genai.protos.Tool(google_search_retrieval={})]
+        )
+        return response.text
+    
+    async def _call_ollama(self, prompt: str) -> str:
+        """Call Ollama local server"""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "model": self.model,
+                "prompt": full_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 1500
+                }
+            }
+            
+            async with session.post(
+                f"{self.ollama_url}/api/generate",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result.get('response', '')
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Ollama API error {response.status}: {error_text}")
     
     def _classify_market_question(self, question: str) -> str:
         """
@@ -210,196 +290,42 @@ class MarketCompassAgent:
         # Default to market strategy
         return 'market_strategy'
     
-    async def _analyze_with_web_search(
-        self,
-        question: str,
-        user_context: str,
-        question_metadata: Dict,
-        question_type: str
-    ) -> Dict:
-        """
-        Analyze using Gemini with web search (for factual market data)
-        """
-        # Build prompt with context
-        prompt = self._build_research_prompt(
-            question,
-            user_context,
-            question_metadata,
-            question_type
-        )
-        
-        # Call Gemini with Google Search grounding
-        response = await asyncio.to_thread(
-            self.gemini_model.generate_content,
-            prompt,
-            tools=[genai.protos.Tool(google_search_retrieval={})]
-        )
-        
-        # Parse response
-        response_text = response.text
-        
-        # Extract structured data (basic parsing)
-        result = self._parse_agent_response(response_text)
-        result['model_used'] = 'gemini-2.0-flash-exp'
-        result['web_search_used'] = True
-        
-        return result
-    
-    async def _analyze_with_claude(
-        self,
-        question: str,
-        user_context: str,
-        question_metadata: Dict
-    ) -> Dict:
-        """
-        Analyze using Claude (for strategic analysis without web search)
-        """
-        # Build prompt
-        prompt = self._build_strategic_prompt(
-            question,
-            user_context,
-            question_metadata
-        )
-        
-        # Call Claude
-        response = await self.claude_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1500,
-            temperature=0.7,
-            system=self.SYSTEM_PROMPT,
-            messages=[{'role': 'user', 'content': prompt}]
-        )
-        
-        response_text = response.content[0].text
-        
-        # Parse response
-        result = self._parse_agent_response(response_text)
-        result['model_used'] = 'claude-sonnet-4'
-        result['web_search_used'] = False
-        
-        return result
-    
-    async def _analyze_signal_two_phase(
-        self,
-        question: str,
-        user_context: str,
-        question_metadata: Dict
-    ) -> Dict:
-        """
-        Two-phase analysis: Gemini research + Claude interpretation
-        """
-        # Phase 1: Gemini gathers data
-        if self.use_web_search:
-            research_prompt = f"""Research this market signal: {question}
-
-                    Find recent data, news, and trends related to this signal.
-                    Focus on: facts, data points, recent developments, expert opinions.
-
-                    Return factual research only (no interpretation yet)."""
-
-            research_response = await asyncio.to_thread(
-                self.gemini_model.generate_content,
-                research_prompt,
-                tools=[genai.protos.Tool(google_search_retrieval={})]
-            )
-            
-            research_data = research_response.text
-        else:
-            research_data = "No web search available - using Claude's knowledge only"
-        
-        # Phase 2: Claude interprets with user context
-        interpretation_prompt = f"""
-            {self.SYSTEM_PROMPT}
-
-            USER CONTEXT:
-            {user_context}
-
-            RESEARCH DATA:
-            {research_data}
-
-            USER QUESTION:
-            {question}
-
-            Interpret this signal specifically for this user's situation.
-            Apply the Market Compass framework to provide personalized intelligence.
-            """
-        
-        response = await self.claude_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1500,
-            temperature=0.3,
-            messages=[{'role': 'user', 'content': interpretation_prompt}]
-        )
-        
-        response_text = response.content[0].text
-        
-        # Parse response
-        result = self._parse_agent_response(response_text)
-        result['model_used'] = 'gemini-research + claude-interpretation'
-        result['web_search_used'] = self.use_web_search
-        result['two_phase'] = True
-        
-        return result
-    
-    def _build_research_prompt(
+    def _build_analysis_prompt(
         self,
         question: str,
         user_context: str,
         question_metadata: Dict,
         question_type: str
     ) -> str:
-        """Build prompt for research-focused questions"""
+        """Build prompt for market analysis"""
         
         return f"""
-            {self.SYSTEM_PROMPT}
+USER CONTEXT:
+{user_context}
 
-            USER CONTEXT:
-            {user_context}
+QUESTION TYPE: {question_type}
+COMPLEXITY: {question_metadata.get('complexity', 'medium')}
+URGENCY: {question_metadata.get('urgency', 'routine')}
 
-            QUESTION TYPE: {question_type}
-            COMPLEXITY: {question_metadata.get('complexity', 'medium')}
-            URGENCY: {question_metadata.get('urgency', 'routine')}
+USER QUESTION:
+{question}
 
-            USER QUESTION:
-            {question}
-
-            Use real-time web search to gather current market data.
-            Then provide Market Compass analysis following the framework.
-            Include sources from your research.
-            """
-    
-    def _build_strategic_prompt(
-        self,
-        question: str,
-        user_context: str,
-        question_metadata: Dict
-    ) -> str:
-        """Build prompt for strategic analysis"""
-        
-        return f"""
-            USER CONTEXT:
-            {user_context}
-
-            COMPLEXITY: {question_metadata.get('complexity', 'medium')}
-            URGENCY: {question_metadata.get('urgency', 'routine')}
-
-            USER QUESTION:
-            {question}
-
-            Provide Market Compass analysis following the framework.
-            Use your knowledge of market patterns and strategic principles.
-            """
+Provide Market Compass analysis following the framework.
+Identify market signals, competitive threats, and opportunities.
+Include confidence marking and sources where applicable.
+"""
                 
-    def _parse_agent_response(self, response_text: str) -> Dict:
+    async def _parse_agent_response(self, response_text: str) -> Dict:
         """
         Parse agent response using LLM (Ollama) for robust extraction
         
         Handles natural language variations better than regex
         """
-        from .utils.llm_parser import LLMResponseParser
-        
+        from .utils.llm_parser import get_parser
+
         try:
-            return LLMResponseParser.parse_market_compass_response(response_text)
+            parser = get_parser()
+            return await parser.parse_market_compass_response(response_text)
         except Exception as e:
             logger.error(f"LLM parsing failed: {str(e)}")
             # Ultimate fallback
@@ -427,17 +353,18 @@ if __name__ == '__main__':
         agent = MarketCompassAgent(
             anthropic_api_key=anthropic_key,
             google_api_key=google_key,
+            model='claude-sonnet-4-20250514',  # Try: 'gemini-2.0-flash-exp' or 'llama3.1:8b'
             use_web_search=True
         )
         
         # Test question
         test_question = "What's the current state of the AI SaaS market?"
         test_context = """
-        User: VP Strategy at early-stage SaaS company
-        Industry: B2B Software
-        Expertise: Intermediate
-        Recent questions: Market positioning, competitive analysis
-        """
+User: VP Strategy at early-stage SaaS company
+Industry: B2B Software
+Expertise: Intermediate
+Recent questions: Market positioning, competitive analysis
+"""
         test_metadata = {
             'question_type': 'exploration',
             'domains': ['market', 'strategy'],
@@ -463,6 +390,7 @@ if __name__ == '__main__':
         print(f"\nSuccess: {result['success']}")
         print(f"Response Time: {result['response_time']}s")
         print(f"Model Used: {result.get('model_used', 'N/A')}")
+        print(f"Client Type: {result.get('client_type', 'N/A')}")
         print(f"Web Search: {result.get('web_search_used', False)}")
         print(f"\nAnalysis:\n{result['analysis']}")
         print(f"\nConfidence: {result['confidence']}")

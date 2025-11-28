@@ -1,14 +1,15 @@
 # agents/utils/llm_parser.py
 
 """
-Give Celeste an  update
-LLM-Based Response Parser
+LLM-Based Response Parser with Logging
 Uses Gemini Flash (fast, cloud API) to parse agent responses into structured format
+
+NEW: Logs both RAW and PARSED responses for debugging and quality control
 
 Benefits over Ollama:
 - 10x faster (3-5 seconds vs 50-90 seconds)
 - No local hardware required
-- Essentially free ( about $0.0001 per parse)
+- Essentially free (about $0.0001 per parse)
 - Same quality as Ollama
 - Cloud reliability
 
@@ -93,34 +94,43 @@ class LLMResponseParser:
         Returns:
             Dict with structured fields
         """
+        # ============================================================================
+        # LOG RAW RESPONSE (BEFORE PARSING)
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("📝 RAW MARKET COMPASS RESPONSE (Before Parsing)")
+        logger.info("=" * 80)
+        logger.info(response_text)
+        logger.info("=" * 80 + "\n")
+        
         extraction_prompt = f"""Extract structured information from this Market Compass agent response.
 
-            AGENT RESPONSE:
-            {response_text}
+AGENT RESPONSE:
+{response_text}
 
-            Extract the following fields (if present):
-            - analysis: Core market analysis/insight
-            - confidence: Confidence level (look for 🟢/🟡/🟠/🔴 or High/Medium/Low)
-            - signal: Market signal being discussed
-            - for_your_situation: User-specific implications
-            - blindspot: What they might not see
-            - timing: When this matters
-            - sources: Research references or sources
-            - question_back: Closing empowerment question
+Extract the following fields (if present):
+- analysis: Core market analysis/insight
+- confidence: Confidence level (look for 🟢/🟡/🟠/🔴 or High/Medium/Low)
+- signal: Market signal being discussed
+- for_your_situation: User-specific implications
+- blindspot: What they might not see
+- timing: When this matters
+- sources: Research references or sources
+- question_back: Closing empowerment question
 
-            Return ONLY valid JSON in this exact format:
-            {{
-                "analysis": "extracted text or empty string",
-                "confidence": "extracted confidence or '🟡 Medium'",
-                "signal": "extracted signal or empty string",
-                "for_your_situation": "extracted text or empty string",
-                "blindspot": "extracted text or empty string",
-                "timing": "extracted text or empty string",
-                "sources": "extracted text or empty string",
-                "question_back": "extracted question or empty string"
-            }}
+Return ONLY valid JSON in this exact format:
+{{
+    "analysis": "extracted text or empty string",
+    "confidence": "extracted confidence or '🟡 Medium'",
+    "signal": "extracted signal or empty string",
+    "for_your_situation": "extracted text or empty string",
+    "blindspot": "extracted text or empty string",
+    "timing": "extracted text or empty string",
+    "sources": "extracted text or empty string",
+    "question_back": "extracted question or empty string"
+}}
 
-            IMPORTANT: Return ONLY the JSON object, no explanations or markdown."""
+IMPORTANT: Return ONLY the JSON object, no explanations or markdown."""
 
         try:
             if self.backend == 'gemini':
@@ -171,11 +181,21 @@ class LLMResponseParser:
             if not result['analysis']:
                 result['analysis'] = response_text
             
-            logger.info(f"Market Compass response parsed successfully with {self.backend.upper()}")
+            # ============================================================================
+            # LOG PARSED RESPONSE (AFTER PARSING)
+            # ============================================================================
+            logger.info("\n" + "=" * 80)
+            logger.info("✅ PARSED MARKET COMPASS RESPONSE (After Parsing)")
+            logger.info("=" * 80)
+            logger.info(json.dumps(result, indent=2, ensure_ascii=False))
+            logger.info("=" * 80 + "\n")
+            
+            logger.info(f"✅ Market Compass response parsed successfully with {self.backend.upper()}")
             return result
             
         except Exception as e:
-            logger.warning(f"LLM parsing failed ({self.backend}), using fallback: {str(e)}")
+            logger.error(f"❌ LLM parsing failed ({self.backend}): {str(e)}")
+            logger.error(f"Raw response that failed: {response_text[:200]}...")
             return {
                 'analysis': response_text,
                 'confidence': '🟡 Medium',
@@ -197,6 +217,15 @@ class LLMResponseParser:
         Returns:
             Dict with structured fields
         """
+        # ============================================================================
+        # LOG RAW RESPONSE (BEFORE PARSING)
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("💰 RAW FINANCIAL GUARDIAN RESPONSE (Before Parsing)")
+        logger.info("=" * 80)
+        logger.info(response_text)
+        logger.info("=" * 80 + "\n")
+        
         extraction_prompt = f"""Extract structured information from this Financial Guardian agent response.
 
             AGENT RESPONSE:
@@ -276,11 +305,21 @@ class LLMResponseParser:
             if not result['calculation']:
                 result['calculation'] = response_text
             
-            logger.info(f"Financial Guardian response parsed successfully with {self.backend.upper()}")
+            # ============================================================================
+            # LOG PARSED RESPONSE (AFTER PARSING)
+            # ============================================================================
+            logger.info("\n" + "=" * 80)
+            logger.info("✅ PARSED FINANCIAL GUARDIAN RESPONSE (After Parsing)")
+            logger.info("=" * 80)
+            logger.info(json.dumps(result, indent=2, ensure_ascii=False))
+            logger.info("=" * 80 + "\n")
+            
+            logger.info(f"✅ Financial Guardian response parsed successfully with {self.backend.upper()}")
             return result
             
         except Exception as e:
-            logger.warning(f"LLM parsing failed ({self.backend}), using fallback: {str(e)}")
+            logger.error(f"❌ LLM parsing failed ({self.backend}): {str(e)}")
+            logger.error(f"Raw response that failed: {response_text[:200]}...")
             return {
                 'calculation': response_text,
                 'confidence': '🟡 Medium',
@@ -301,6 +340,15 @@ class LLMResponseParser:
         Returns:
             Dict with structured fields
         """
+        # ============================================================================
+        # LOG RAW RESPONSE (BEFORE PARSING)
+        # ============================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("🎯 RAW STRATEGY ANALYST RESPONSE (Before Parsing)")
+        logger.info("=" * 80)
+        logger.info(response_text)
+        logger.info("=" * 80 + "\n")
+        
         extraction_prompt = f"""Extract structured information from this Strategy Analyst agent response.
 
 AGENT RESPONSE:
@@ -378,11 +426,21 @@ IMPORTANT: Return ONLY the JSON object, no explanations or markdown."""
             if not result['decision_reframe']:
                 result['decision_reframe'] = response_text
             
-            logger.info(f"Strategy Analyst response parsed successfully with {self.backend.upper()}")
+            # ============================================================================
+            # LOG PARSED RESPONSE (AFTER PARSING)
+            # ============================================================================
+            logger.info("\n" + "=" * 80)
+            logger.info("✅ PARSED STRATEGY ANALYST RESPONSE (After Parsing)")
+            logger.info("=" * 80)
+            logger.info(json.dumps(result, indent=2, ensure_ascii=False))
+            logger.info("=" * 80 + "\n")
+            
+            logger.info(f"✅ Strategy Analyst response parsed successfully with {self.backend.upper()}")
             return result
             
         except Exception as e:
-            logger.warning(f"LLM parsing failed ({self.backend}), using fallback: {str(e)}")
+            logger.error(f"❌ LLM parsing failed ({self.backend}): {str(e)}")
+            logger.error(f"Raw response that failed: {response_text[:200]}...")
             return {
                 'decision_reframe': response_text,
                 'confidence': '🟡 Medium',
@@ -398,6 +456,7 @@ IMPORTANT: Return ONLY the JSON object, no explanations or markdown."""
     # Regex fallback methods (fast but brittle)
     def _regex_parse_market_compass(self, text: str) -> Dict:
         """Simple regex fallback for Market Compass"""
+        logger.info("Using regex fallback for Market Compass")
         return {
             'analysis': text,
             'confidence': '🟡 Medium',
@@ -411,6 +470,7 @@ IMPORTANT: Return ONLY the JSON object, no explanations or markdown."""
     
     def _regex_parse_financial_guardian(self, text: str) -> Dict:
         """Simple regex fallback for Financial Guardian"""
+        logger.info("Using regex fallback for Financial Guardian")
         return {
             'calculation': text,
             'confidence': '🟡 Medium',
@@ -423,6 +483,7 @@ IMPORTANT: Return ONLY the JSON object, no explanations or markdown."""
     
     def _regex_parse_strategy_analyst(self, text: str) -> Dict:
         """Simple regex fallback for Strategy Analyst"""
+        logger.info("Using regex fallback for Strategy Analyst")
         return {
             'decision_reframe': text,
             'confidence': '🟡 Medium',
@@ -476,28 +537,6 @@ if __name__ == '__main__':
         print(f"Backend: {parser.backend.upper()}")
         print("=" * 80)
         parsed = await parser.parse_market_compass_response(market_response)
-        print(json.dumps(parsed, indent=2))
-        
-        # Test Financial Guardian parsing
-        financial_response = """
-        Calculation: With CAC of $1,500 and LTV of $4,200, your LTV:CAC ratio is 2.8:1.
-        
-        Confidence: 🟡 Medium - Assuming churn stays at 5%
-        
-        Scenarios:
-        Optimistic: If you reduce churn to 3%, LTV jumps to $7,000 (4.7:1 ratio)
-        Realistic: Current 2.8:1 ratio is sustainable but not ideal
-        Pessimistic: If churn increases to 8%, LTV drops to $2,625 (1.75:1 ratio - danger zone)
-        
-        Critical Constraint: Churn rate. Every 1% increase in churn costs you $1,050 per customer.
-        """
-        
-        print("\n" + "=" * 80)
-        print("TESTING FINANCIAL GUARDIAN PARSER")
-        print(f"Backend: {parser.backend.upper()}")
-        print("=" * 80)
-        parsed = await parser.parse_financial_guardian_response(financial_response)
-        print(json.dumps(parsed, indent=2))
         
         print("\n" + "=" * 80)
         print(f"✅ ALL PARSERS TESTED SUCCESSFULLY WITH {parser.backend.upper()}")
