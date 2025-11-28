@@ -457,15 +457,18 @@ async def run_multi_agent_orchestration_pipeline(
         agent_timings = metadata.get('agent_timings', {})
         agent_responses_data = metadata.get('agent_responses', {})
 
-        # Estimate tokens per agent (LangGraph doesn't return this yet)
-        # TODO: Update LangGraph to return per-agent token counts
+        # Estimate tokens per agent
         for agent_name in metadata.get('agents_succeeded', []):
+
+            agent_data = agent_responses_data.get(agent_name, {})
+            token_data = agent_data.get('tokens', {})
+
             # Conservative estimates based on typical usage
-            estimated_prompt = 1200  # ~1200 tokens per agent prompt
-            estimated_completion = 400  # ~400 tokens per agent response
+            prompt_tokens = token_data.get('prompt', 1200)  # Fallback to 1200
+            completion_tokens = token_data.get('completion', 400)  # Fallback to 400
             
-            total_prompt_tokens += estimated_prompt
-            total_completion_tokens += estimated_completion
+            total_prompt_tokens += prompt_tokens
+            total_completion_tokens += completion_tokens
 
         total_tokens = total_prompt_tokens + total_completion_tokens
 
@@ -526,8 +529,8 @@ async def run_multi_agent_orchestration_pipeline(
                 execution_time=agent_timing,
                 success=True,
                 error_message='',
-                prompt_tokens=1200,
-                completion_tokens=400,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
                 cost=per_agent_cost
             )
             
@@ -891,5 +894,35 @@ def get_analytics(request):
         logger.error(f"Error in get_analytics: {str(e)}", exc_info=True)
         return Response(
             {'error': 'Failed to generate analytics'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    
+
+
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_cache_stats(request):
+    """
+    Get Redis cache statistics
+    
+    GET /api/agents/cache-stats
+    """
+    from agents.utils.cache import get_cache_manager
+    
+    try:
+        cache = get_cache_manager()
+        stats = cache.get_stats()
+        
+        return Response({
+            'cache_stats': stats,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting cache stats: {str(e)}", exc_info=True)
+        return Response(
+            {'error': 'Failed to get cache stats'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

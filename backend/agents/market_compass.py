@@ -118,9 +118,12 @@ Focus on actionable intelligence specific to the user's situation."""
             model: Model to use (auto-detects client type)
             use_web_search: Whether to use real-time web search
         """
-        self.cache = get_cache_manager()  # ✅ UNIFIED CACHE
+        self.cache = get_cache_manager()
         self.model = model
         self.use_web_search = use_web_search
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_total_tokens = 0
 
         # Hash system prompts for caching
         self.full_prompt_hash = hashlib.md5(self.SYSTEM_PROMPT.encode()).hexdigest()
@@ -215,6 +218,9 @@ Focus on actionable intelligence specific to the user's situation."""
                 response_text = await self._call_claude(prompt)
                 web_search_used = False
             
+            # Get token counts from last API call
+            token_counts = self._get_last_token_counts()
+
             # Parse response
             result = await self._parse_agent_response(response_text)
             result['model_used'] = self.model
@@ -225,7 +231,18 @@ Focus on actionable intelligence specific to the user's situation."""
             result['response_time'] = round(time.time() - start_time, 2)
             result['success'] = True
             result['from_cache'] = False
-            
+                        
+            # Include token metadata in result
+            result.update({
+                'prompt_tokens': token_counts['prompt_tokens'],
+                'completion_tokens': token_counts['completion_tokens'],
+                'total_tokens': token_counts['total_tokens'],
+                'cost': self._calculate_cost(
+                    token_counts['prompt_tokens'],
+                    token_counts['completion_tokens']
+                )
+            })
+
             # Cache the agent response
             self.cache.set_agent_response(
                 question_hash,
@@ -236,7 +253,8 @@ Focus on actionable intelligence specific to the user's situation."""
             logger.info(
                 f"Market Compass analysis complete - "
                 f"type={question_type}, client={self.client_type}, "
-                f"search={web_search_used}, time={result['response_time']}s"
+                f"client={self.client_type}, time={result['response_time']}s, "
+                f"tokens={token_counts['total_tokens']}"
             )
             
             return result
@@ -253,7 +271,11 @@ Focus on actionable intelligence specific to the user's situation."""
                 'analysis': 'Unable to complete market analysis due to technical error.',
                 'confidence': '🔴 Low - Analysis failed',
                 'fallback': True,
-                'from_cache': False
+                'from_cache': False,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+                'cost': 0.0
             }
     
     async def _call_claude(self, prompt: str) -> str:
@@ -269,6 +291,8 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Claude response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(self.SYSTEM_PROMPT + prompt, cached_output)
             return cached_output
         
         # Call Claude API with Anthropic's prompt caching
@@ -288,6 +312,13 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         
         output = response.content[0].text
+
+                
+        # Track actual token counts from Claude
+        self.last_prompt_tokens = response.usage.input_tokens
+        self.last_completion_tokens = response.usage.output_tokens
+        self.last_total_tokens = self.last_prompt_tokens + self.last_completion_tokens
+        
         
         # Cache in Redis (30 min)
         self.cache.set_model_output(
@@ -295,7 +326,7 @@ Focus on actionable intelligence specific to the user's situation."""
             input_hash,
             output
         )
-        logger.info("Cached Claude response in Redis")
+        logger.info(f"Cached Claude response in Redis (tokens={self.last_total_tokens})")
         
         return output
     
@@ -313,6 +344,8 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Gemini response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(self.SYSTEM_PROMPT + prompt, cached_output)
             return cached_output
         
         # Call Gemini API
@@ -323,14 +356,17 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         
         output = response.text
-        
+                
+        # Estimate tokens (Gemini doesn't provide exact counts)
+        self._estimate_tokens_from_text(full_prompt, output)
+
         # Cache in Redis
         self.cache.set_model_output(
             f"gemini_{self.model}",
             input_hash,
             output
         )
-        logger.info("💾 Cached Gemini response in Redis")
+        logger.info(f"Cached Gemini response in Redis (est. tokens={self.last_total_tokens})")
         
         return output
     
@@ -348,6 +384,8 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Gemini+Search response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(full_prompt, cached_output)
             return cached_output
         
         # Call Gemini API with search
@@ -359,14 +397,17 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         
         output = response.text
-        
+
+        # Estimate tokens (Gemini doesn't provide exact counts)
+        self._estimate_tokens_from_text(full_prompt, output)
+
         # Cache in Redis
         self.cache.set_model_output(
             f"gemini_{self.model}_search",
             input_hash,
             output
         )
-        logger.info("💾 Cached Gemini+Search response in Redis")
+        logger.info(f"Cached Gemini+Search response in Redis (est. tokens={self.last_total_tokens})")
         
         return output
     
@@ -386,6 +427,8 @@ Focus on actionable intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Ollama response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(full_prompt, cached_output)
             return cached_output
         
         # Call Ollama API
@@ -396,7 +439,7 @@ Focus on actionable intelligence specific to the user's situation."""
                 "prompt": full_prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.7,
+                    "temperature": 0.3,
                     "num_predict": 1500
                 }
             }
@@ -410,19 +453,76 @@ Focus on actionable intelligence specific to the user's situation."""
                     result = await response.json()
                     output = result.get('response', '')
                     
+                    self._estimate_tokens_from_text(full_prompt, output)
+
                     # Cache in Redis
                     self.cache.set_model_output(
                         f"ollama_{self.model}",
                         input_hash,
                         output
                     )
-                    logger.info("Cached Ollama response in Redis")
+                    logger.info(f"💾 Cached Ollama response in Redis (est. tokens={self.last_total_tokens})")
                     
                     return output
                 else:
                     error_text = await response.text()
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
     
+
+    # Token estimation for non-Claude models
+    def _estimate_tokens_from_text(self, prompt: str, completion: str):
+        """Estimate token counts from text (for Gemini/Ollama)"""
+        # Rough estimation: 1 token ≈ 0.75 words
+        # More accurate: 1 token ≈ 4 characters
+        self.last_prompt_tokens = int(len(prompt.split()) * 1.3)
+        self.last_completion_tokens = int(len(completion.split()) * 1.3)
+        self.last_total_tokens = self.last_prompt_tokens + self.last_completion_tokens
+    
+    # Get token counts helper
+    def _get_last_token_counts(self) -> Dict:
+        """Get token counts from last API call"""
+        return {
+            'prompt_tokens': self.last_prompt_tokens,
+            'completion_tokens': self.last_completion_tokens,
+            'total_tokens': self.last_total_tokens
+        }
+    
+    # Cost calculation
+    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Calculate cost based on model and token counts"""
+        
+        # Claude pricing (per 1M tokens)
+        if self.client_type == 'claude':
+            if 'opus' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 15.00
+                output_cost = (completion_tokens / 1_000_000) * 75.00
+            elif 'sonnet' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 3.00
+                output_cost = (completion_tokens / 1_000_000) * 15.00
+            elif 'haiku' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 0.80
+                output_cost = (completion_tokens / 1_000_000) * 4.00
+            else:
+                input_cost = (prompt_tokens / 1_000_000) * 3.00
+                output_cost = (completion_tokens / 1_000_000) * 15.00
+            
+            return input_cost + output_cost
+        
+        # Gemini pricing
+        elif self.client_type == 'gemini':
+            if 'pro' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 1.25
+                output_cost = (completion_tokens / 1_000_000) * 5.00
+            else:  # flash
+                input_cost = (prompt_tokens / 1_000_000) * 0.075
+                output_cost = (completion_tokens / 1_000_000) * 0.30
+            
+            return input_cost + output_cost
+        
+        # Ollama is free
+        else:
+            return 0.0
+        
     def _classify_market_question(self, question: str) -> str:
         """
         Classify type of market question

@@ -1,4 +1,4 @@
-# agents/financial_guardian.py
+# agents/financial_guardian.py - FIXED WITH TOKEN TRACKING
 
 """
 FINANCIAL GUARDIAN AGENT
@@ -20,6 +20,11 @@ Caching Strategy:
 - System prompts: 1 hour (Redis)
 - Model outputs: 30 minutes (Redis)
 - Agent responses: 15 minutes (Redis)
+
+Token Tracking:
+- Claude: Exact counts from API
+- Gemini: Estimated (word count * 1.3)
+- Ollama: Estimated (word count * 1.3)
 
 Output: Financial analysis with calculations, scenarios, constraints, and confidence marking
 """
@@ -114,14 +119,19 @@ Focus on actionable financial intelligence specific to the user's situation."""
             model: Model to use (auto-detects client type)
             google_api_key: Google API key (for Gemini models)
         """
-        self.cache = get_cache_manager()  # ✅ UNIFIED CACHE
+        self.cache = get_cache_manager()
         self.model = model
+        
+        # Token tracking variables
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_total_tokens = 0
 
         # Hash system prompts for caching
         self.full_prompt_hash = hashlib.md5(self.SYSTEM_PROMPT.encode()).hexdigest()
         self.condensed_prompt_hash = hashlib.md5(self.CONDENSED_SYSTEM_PROMPT.encode()).hexdigest()
         
-        # ✅ AUTO-DETECT CLIENT TYPE
+        # AUTO-DETECT CLIENT TYPE
         if model.startswith('llama') or model.startswith('ollama') or model.startswith('mistral'):
             # Ollama model
             self.client_type = 'ollama'
@@ -194,13 +204,16 @@ Focus on actionable financial intelligence specific to the user's situation."""
                 question_type
             )
             
-            # ✅ ROUTE TO APPROPRIATE CLIENT
+            # ROUTE TO APPROPRIATE CLIENT
             if self.client_type == 'ollama':
                 response_text = await self._call_ollama(prompt)
             elif self.client_type == 'gemini':
                 response_text = await self._call_gemini(prompt)
             else:  # claude
                 response_text = await self._call_claude(prompt)
+            
+            # Get token counts from last API call
+            token_counts = self._get_last_token_counts()
             
             # Parse response
             result = await self._parse_agent_response(response_text)
@@ -212,6 +225,17 @@ Focus on actionable financial intelligence specific to the user's situation."""
             result['success'] = True
             result['from_cache'] = False
             
+            # Include token metadata in result
+            result.update({
+                'prompt_tokens': token_counts['prompt_tokens'],
+                'completion_tokens': token_counts['completion_tokens'],
+                'total_tokens': token_counts['total_tokens'],
+                'cost': self._calculate_cost(
+                    token_counts['prompt_tokens'],
+                    token_counts['completion_tokens']
+                )
+            })
+            
             # Cache the agent response
             self.cache.set_agent_response(
                 question_hash,
@@ -222,7 +246,8 @@ Focus on actionable financial intelligence specific to the user's situation."""
             logger.info(
                 f"Financial Guardian analysis complete - "
                 f"type={question_type}, client={self.client_type}, "
-                f"time={result['response_time']}s"
+                f"time={result['response_time']}s, "
+                f"tokens={token_counts['total_tokens']}"
             )
             
             return result
@@ -239,11 +264,15 @@ Focus on actionable financial intelligence specific to the user's situation."""
                 'calculation': 'Unable to complete financial analysis due to technical error.',
                 'confidence': '🔴 Low - Analysis failed',
                 'fallback': True,
-                'from_cache': False
+                'from_cache': False,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+                'cost': 0.0
             }
     
     async def _call_claude(self, prompt: str) -> str:
-        """Call Claude API with Redis + Anthropic dual caching"""
+        """Call Claude API with Redis + Anthropic dual caching and token tracking"""
         
         # Generate cache key
         input_hash = hashlib.md5(prompt.encode()).hexdigest()
@@ -255,6 +284,8 @@ Focus on actionable financial intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Claude response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(self.SYSTEM_PROMPT + prompt, cached_output)
             return cached_output
         
         # Call Claude API with Anthropic's prompt caching
@@ -275,18 +306,23 @@ Focus on actionable financial intelligence specific to the user's situation."""
         
         output = response.content[0].text
         
+        # Track actual token counts from Claude
+        self.last_prompt_tokens = response.usage.input_tokens
+        self.last_completion_tokens = response.usage.output_tokens
+        self.last_total_tokens = self.last_prompt_tokens + self.last_completion_tokens
+        
         # Cache in Redis (30 min)
         self.cache.set_model_output(
             f"claude_{self.model}",
             input_hash,
             output
         )
-        logger.info("💾 Cached Claude response in Redis")
+        logger.info(f"💾 Cached Claude response in Redis (tokens={self.last_total_tokens})")
         
         return output
     
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API with Redis caching"""
+        """Call Gemini API with Redis caching and token estimation"""
         
         # Generate cache key
         full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
@@ -299,6 +335,8 @@ Focus on actionable financial intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Gemini response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(full_prompt, cached_output)
             return cached_output
         
         # Call Gemini API
@@ -310,18 +348,21 @@ Focus on actionable financial intelligence specific to the user's situation."""
         
         output = response.text
         
+        # Estimate tokens (Gemini doesn't provide exact counts)
+        self._estimate_tokens_from_text(full_prompt, output)
+        
         # Cache in Redis
         self.cache.set_model_output(
             f"gemini_{self.model}",
             input_hash,
             output
         )
-        logger.info("💾 Cached Gemini response in Redis")
+        logger.info(f"💾 Cached Gemini response in Redis (est. tokens={self.last_total_tokens})")
         
         return output
     
     async def _call_ollama(self, prompt: str) -> str:
-        """Call Ollama with condensed prompt and Redis caching"""
+        """Call Ollama with condensed prompt, Redis caching, and token estimation"""
         
         # Use condensed prompt for speed
         full_prompt = f"{self.CONDENSED_SYSTEM_PROMPT}\n\n{prompt}"
@@ -336,6 +377,8 @@ Focus on actionable financial intelligence specific to the user's situation."""
         )
         if cached_output:
             logger.info("✅ Using Redis cached Ollama response")
+            # Estimate tokens for cached response
+            self._estimate_tokens_from_text(full_prompt, cached_output)
             return cached_output
         
         # Call Ollama API
@@ -360,18 +403,75 @@ Focus on actionable financial intelligence specific to the user's situation."""
                     result = await response.json()
                     output = result.get('response', '')
                     
+                    # Estimate tokens (Ollama doesn't provide exact counts)
+                    self._estimate_tokens_from_text(full_prompt, output)
+                    
                     # Cache in Redis
                     self.cache.set_model_output(
                         f"ollama_{self.model}",
                         input_hash,
                         output
                     )
-                    logger.info("💾 Cached Ollama response in Redis")
+                    logger.info(f"💾 Cached Ollama response in Redis (est. tokens={self.last_total_tokens})")
                     
                     return output
                 else:
                     error_text = await response.text()
                     raise Exception(f"Ollama API error {response.status}: {error_text}")
+    
+    # Token estimation for non-Claude models
+    def _estimate_tokens_from_text(self, prompt: str, completion: str):
+        """Estimate token counts from text (for Gemini/Ollama)"""
+        # Rough estimation: 1 token ≈ 0.75 words
+        # More accurate: 1 token ≈ 4 characters
+        self.last_prompt_tokens = int(len(prompt.split()) * 1.3)
+        self.last_completion_tokens = int(len(completion.split()) * 1.3)
+        self.last_total_tokens = self.last_prompt_tokens + self.last_completion_tokens
+    
+    # Get token counts helper
+    def _get_last_token_counts(self) -> Dict:
+        """Get token counts from last API call"""
+        return {
+            'prompt_tokens': self.last_prompt_tokens,
+            'completion_tokens': self.last_completion_tokens,
+            'total_tokens': self.last_total_tokens
+        }
+    
+    # Cost calculation
+    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Calculate cost based on model and token counts"""
+        
+        # Claude pricing (per 1M tokens)
+        if self.client_type == 'claude':
+            if 'opus' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 15.00
+                output_cost = (completion_tokens / 1_000_000) * 75.00
+            elif 'sonnet' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 3.00
+                output_cost = (completion_tokens / 1_000_000) * 15.00
+            elif 'haiku' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 0.80
+                output_cost = (completion_tokens / 1_000_000) * 4.00
+            else:
+                input_cost = (prompt_tokens / 1_000_000) * 3.00
+                output_cost = (completion_tokens / 1_000_000) * 15.00
+            
+            return input_cost + output_cost
+        
+        # Gemini pricing
+        elif self.client_type == 'gemini':
+            if 'pro' in self.model:
+                input_cost = (prompt_tokens / 1_000_000) * 1.25
+                output_cost = (completion_tokens / 1_000_000) * 5.00
+            else:  # flash
+                input_cost = (prompt_tokens / 1_000_000) * 0.075
+                output_cost = (completion_tokens / 1_000_000) * 0.30
+            
+            return input_cost + output_cost
+        
+        # Ollama is free
+        else:
+            return 0.0
     
     def _classify_financial_question(self, question: str) -> str:
         """
@@ -477,7 +577,7 @@ Focus on actionable financial intelligence specific to the user's situation."""
 
 # Example usage
 if __name__ == '__main__':
-    """Test Financial Guardian agent with caching"""
+    """Test Financial Guardian agent with caching and token tracking"""
     from decouple import config
     
     async def test_agent():
@@ -506,7 +606,7 @@ if __name__ == '__main__':
         }
         
         print("\n" + "=" * 80)
-        print("TESTING FINANCIAL GUARDIAN AGENT WITH CACHE")
+        print("TESTING FINANCIAL GUARDIAN AGENT WITH TOKEN TRACKING")
         print("=" * 80)
         
         # First call - should hit API
@@ -520,6 +620,10 @@ if __name__ == '__main__':
         print(f"✅ From Cache: {result1.get('from_cache', False)}")
         print(f"✅ Model Used: {result1.get('model_used', 'N/A')}")
         print(f"✅ Client Type: {result1.get('client_type', 'N/A')}")
+        print(f"✅ Prompt Tokens: {result1.get('prompt_tokens', 0)}")
+        print(f"✅ Completion Tokens: {result1.get('completion_tokens', 0)}")
+        print(f"✅ Total Tokens: {result1.get('total_tokens', 0)}")
+        print(f"✅ Cost: ${result1.get('cost', 0):.6f}")
         
         # Second call - should hit cache
         print("\n[TEST 2] Second call (Cache)...")
@@ -530,6 +634,7 @@ if __name__ == '__main__':
         )
         print(f"✅ Response Time: {result2['response_time']}s")
         print(f"✅ From Cache: {result2.get('from_cache', False)}")
+        print(f"✅ Total Tokens: {result2.get('total_tokens', 0)}")
         
         # Show calculation
         print(f"\n💰 Calculation:\n{result2['calculation'][:300]}...")

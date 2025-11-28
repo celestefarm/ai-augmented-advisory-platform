@@ -58,6 +58,7 @@ class MultiAgentState(TypedDict, total=False):
     agent_errors: Dict[str, str]            # Any errors encountered
     agents_succeeded: List[str]             # Which agents succeeded
     agents_failed: List[str]                # Which agents failed
+    agent_token_data: Dict[str, Dict]      # Token usage per agent
     
     # ============================================================================
     # STAGE 4: SYNTHESIZE (Chief of Staff Synthesis)
@@ -127,6 +128,7 @@ def initialize_state( question: str, user_context: str, workspace_id: str, user_
         'agent_responses': {},
         'agent_timings': {},
         'agent_errors': {},
+        'agent_token_data': {},
         'agents_succeeded': [],
         'agents_failed': [],
         

@@ -23,8 +23,10 @@ from typing import AsyncGenerator, Dict, Optional, Tuple
 from anthropic import AsyncAnthropic
 from anthropic.types import Message, MessageStreamEvent
 import logging
+import hashlib
 
 from ..prompts.chief_of_staff import get_chief_of_staff_prompt
+from agents.utils.cache import get_cache_manager
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +66,9 @@ class ChiefOfStaffAgent:
         google_api_key: Optional[str] = None
     ):
         """
-        Initialize Chief of Staff Agent
-        
-        Args:
-            api_key: Anthropic API key
-            model: Model name (claude-*, gemini-*, or ollama model)
-            max_tokens: Maximum tokens in response
-            temperature: Sampling temperature (0-1)
-            google_api_key: Optional Google AI API key for Gemini models
+        Initialize Chief of Staff Agent with caching
         """
+        self.cache = get_cache_manager()
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -716,10 +712,15 @@ class ChiefOfStaffAgent:
         emotional_state: str = 'neutral'
     ) -> Tuple[str, Dict]:
         """
-        Synthesize outputs from specialist agents
+        Synthesize outputs from specialist agents WITH CACHING
         
         The Chief of Staff's Week 3 role - combining specialist perspectives
         (Market Compass, Financial Guardian, Strategy Analyst) into executive-ready insights.
+        
+        Caching Strategy:
+        - Cache key based on question + specialist outputs hash
+        - TTL: 15 minutes (same as agent responses)
+        - Dramatically speeds up repeat synthesis requests
         
         Args:
             question: Original user question
@@ -729,42 +730,81 @@ class ChiefOfStaffAgent:
             
         Returns:
             Tuple of (synthesis_text, metadata)
-            
-        Example:
-            synthesis, metadata = await chief_agent.synthesize_specialist_outputs(
-                question="Should we expand to enterprise?",
-                specialist_outputs={
-                    'market_compass': {...},
-                    'financial_guardian': {...},
-                    'strategy_analyst': {...}
-                },
-                user_context="Series A CEO",
-                emotional_state='anxiety'
-            )
         """
-        # Build synthesis prompt
-        synthesis_prompt = self._build_synthesis_prompt(
-            question=question,
-            specialist_outputs=specialist_outputs
-        )
+        start_time = time.time()
         
-        # Use generate_response_simple for synthesis
-        synthesis, metadata = await self.generate_response_simple(
-            user_question=synthesis_prompt,
-            user_context=user_context,
-            emotional_state=emotional_state,
-            tone_adjustment={
-                'approach': 'synthesis',
-                'style': 'executive_summary'
-            },
-            question_metadata={
-                'question_type': 'synthesis',
-                'complexity': 'high',
-                'domains': ['synthesis']
+        try:
+            # Generate cache key from question + specialist outputs
+            cache_content = f"{question}:{str(specialist_outputs)}"
+            cache_hash = hashlib.md5(cache_content.encode()).hexdigest()
+            
+            # Check cache first
+            cached_result = self.cache.get_agent_response(
+                cache_hash,
+                'chief_of_staff_synthesis'
+            )
+            
+            if cached_result:
+                logger.info("✅ Using cached Chief of Staff synthesis")
+                # Update timing for cache hit
+                cached_result['metadata']['response_time'] = round(time.time() - start_time, 2)
+                cached_result['metadata']['from_cache'] = True
+                return cached_result['synthesis'], cached_result['metadata']
+            
+            # Build synthesis prompt
+            synthesis_prompt = self._build_synthesis_prompt(
+                question=question,
+                specialist_outputs=specialist_outputs
+            )
+            
+            logger.info("🌐 Generating fresh Chief of Staff synthesis")
+            
+            # Generate synthesis
+            synthesis, metadata = await self.generate_response_simple(
+                user_question=synthesis_prompt,
+                user_context=user_context,
+                emotional_state=emotional_state,
+                tone_adjustment={
+                    'approach': 'synthesis',
+                    'style': 'executive_summary'
+                },
+                question_metadata={
+                    'question_type': 'synthesis',
+                    'complexity': 'high',
+                    'domains': ['synthesis']
+                }
+            )
+            
+            metadata['from_cache'] = False
+            
+            # Cache the result
+            cache_data = {
+                'synthesis': synthesis,
+                'metadata': metadata
             }
-        )
-        
-        return synthesis, metadata
+            
+            self.cache.set_agent_response(
+                cache_hash,
+                'chief_of_staff_synthesis',
+                cache_data
+            )
+            
+            logger.info("💾 Cached Chief of Staff synthesis")
+            
+            return synthesis, metadata
+            
+        except Exception as e:
+            logger.error(f"Error in synthesis: {str(e)}", exc_info=True)
+            
+            # Return error metadata
+            error_metadata = {
+                'response_time': round(time.time() - start_time, 2),
+                'error': str(e),
+                'success': False,
+                'from_cache': False
+            }
+            
+            return f"Synthesis failed: {str(e)}", error_metadata
 
 
     def _build_synthesis_prompt(
@@ -916,104 +956,6 @@ class ChiefOfStaffAgent:
         
         return "\n".join(prompt_parts)
 
-
-    # ========================================================================
-    # INSTALLATION INSTRUCTIONS
-    # ========================================================================
-    """
-    TO ADD THESE METHODS TO YOUR CHIEF OF STAFF AGENT:
-
-    1. Open: agents/services/chief_agent.py
-
-    2. Find the ChiefOfStaffAgent class
-
-    3. Scroll to the end of the class (after generate_response_simple method)
-
-    4. Add both methods above:
-    - synthesize_specialist_outputs()
-    - _build_synthesis_prompt()
-
-    5. Location in file (approximate line number):
-    
-    class ChiefOfStaffAgent:
-        def __init__(self, ...):
-            ...
-        
-        async def generate_response(self, ...):
-            ...
-        
-        async def generate_response_simple(self, ...):
-            ...
-        
-        # ADD HERE (after generate_response_simple):
-        async def synthesize_specialist_outputs(self, ...):
-            ...  # First method
-        
-        def _build_synthesis_prompt(self, ...):
-            ...  # Second method
-        
-        # Existing methods continue...
-        def _build_messages(self, ...):
-            ...
-
-    6. Make sure both methods are indented at the SAME level as other class methods
-
-    7. Save the file
-
-    8. Test with:
-    python -m agents.services.chief_agent
-
-    That's it! Your Chief of Staff now has synthesis capability.
-    """
-
-    # ========================================================================
-    # QUICK TEST
-    # ========================================================================
-    """
-    To test the synthesis method:
-
-    import asyncio
-    from agents.services.chief_agent import ChiefOfStaffAgent
-    from decouple import config
-
-    async def test_synthesis():
-        chief = ChiefOfStaffAgent(
-            api_key=config('ANTHROPIC_API_KEY'),
-            model='claude-sonnet-4-20250514',
-            temperature=0.5  # ← Note: 0.5 for synthesis
-        )
-        
-        # Mock specialist outputs
-        specialist_outputs = {
-            'market_compass': {
-                'analysis': 'Market opportunity is real, 18-24 month window',
-                'confidence': '🟢 High',
-                'for_your_situation': 'Your SMB traction validates upmarket move'
-            },
-            'financial_guardian': {
-                'calculation': 'Enterprise CAC is 8x higher: $12K vs $1.5K',
-                'confidence': '🟡 Medium',
-                'critical_constraint': 'Current burn rate gives 6 months runway'
-            },
-            'strategy_analyst': {
-                'decision_reframe': 'Real question: Can you serve 2 segments with one team?',
-                'confidence': '🟢 High',
-                'framework_applied': 'Playing to Win'
-            }
-        }
-        
-        synthesis, metadata = await chief.synthesize_specialist_outputs(
-            question='Should we expand to enterprise market?',
-            specialist_outputs=specialist_outputs,
-            user_context='Series A SaaS CEO, 100 SMB customers',
-            emotional_state='anxiety'
-        )
-        
-        print(f"Synthesis ({metadata['response_time']:.2f}s):")
-        print(synthesis)
-
-    asyncio.run(test_synthesis())
-    """
 
 
     def _build_messages(

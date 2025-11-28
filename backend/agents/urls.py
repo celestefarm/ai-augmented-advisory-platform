@@ -13,4 +13,7 @@ urlpatterns = [
     
     # Analytics
     path('analytics', views.get_analytics, name='analytics'),
+
+    # cache management
+    path('cache-stats', views.get_cache_stats, name='cache-stats'),
 ]
